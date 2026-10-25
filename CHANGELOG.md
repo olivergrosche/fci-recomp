@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.2.1-og1] - 2026-10-25
+
+olivergrosche's fork of 0.2.1.
+
+### Added
+
+- Direct stick aim on foot, off by default: `controls-stick-aim = 1` in fci.ini. The right stick turns the view
+  directly, past the game's axis snapping, turn ramp-up and slowdown over targets; speed, dead zone, curve,
+  rim boost and invert are options next to it (upstream PR #41).
+- Longer weapon ranges: `python -B tools/weapon_range.py` raises each gun's hit range in both games' lua.dat
+  (pistols 150 m instead of 30 m, rifles 600 m instead of 45 to 70 m); `--restore` undoes it
+  (upstream PR #42, notes in re/notes/WEAPONS.md).
+
+### Fixed
+
+- On Windows in another language than English (German, for example), Visual Studio was not found and the
+  build downloaded the compiler instead (upstream issue #40).
+
+Built against xboxrecomp 193e2995 and Xbox XBE Recomp 65e959d4. Supported discs: Far Cry Instincts
+title 55530008, version 1 (`data/disc.json`); Far Cry Instincts Evolution title 55530060, version 3
+(`data/evolution/disc.json`).
+
 ## [0.2.1] - 2026-10-23
 
 ### Added

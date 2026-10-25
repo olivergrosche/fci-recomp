@@ -1,3 +1,19 @@
+# fci-recomp: olivergrosche's fork
+
+This fork is [fci-recomp](https://github.com/VinceIP/fci-recomp) by VinceIP with two gameplay improvements and a
+build fix. All three are offered upstream; once they are merged there, use the original.
+
+| Change | How to use | Upstream |
+|---|---|---|
+| **Direct stick aim.** On foot, the right stick turns the view directly, without the game's axis snapping, turn ramp-up and slowdown over targets. Aiming with a controller feels much smoother. | In `fci.ini` next to the game, change `;controls-stick-aim = 0` to `controls-stick-aim = 1`. Speed, dead zone, curve and boost are set right below it. | [#41](https://github.com/VinceIP/fci-recomp/pull/41) |
+| **Longer weapon ranges.** On the Xbox a Beretta M9 does not hit past 30 m, and most guns stop at 30 to 70 m. This raises them: pistols to 150 to 180 m, SMGs to 250 m, rifles and machine guns to 600 to 800 m, sniper rifles to 1000 and 1500 m. | After building, run `build\python\tools\python.exe -B tools\weapon_range.py` in this folder (both games at once). `--restore` puts the original ranges back. | [#42](https://github.com/VinceIP/fci-recomp/pull/42) |
+| **Build fix for non-English Windows.** On German Windows, for example, the build did not find Visual Studio and downloaded the compiler instead. | Nothing to do. | [#40](https://github.com/VinceIP/fci-recomp/issues/40) |
+
+To use it, download the zip of this fork's [latest release](../../releases/latest) and follow Setup below.
+The rest of this page is the original README.
+
+---
+
 # fci-recomp
 
 A native Windows port of **Far Cry Instincts** (2005, original Xbox) and **Far Cry Instincts: Evolution**
