@@ -45,9 +45,11 @@ def find_msvc():
             "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
             "-format",
             "json",
+            # without it the output is in the console's code page (850 on German Windows), which breaks decoding
+            "-utf8",
         ],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
         check=True,
     )
     installs = json.loads(found.stdout or "[]")
