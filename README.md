@@ -1,16 +1,16 @@
 # fci-recomp: olivergrosche's fork
 
-This fork is [fci-recomp](https://github.com/VinceIP/fci-recomp) by VinceIP with two gameplay improvements and a
-build fix. All three are offered upstream; once they are merged there, use the original.
+This fork is [fci-recomp](https://github.com/VinceIP/fci-recomp) by VinceIP with two gameplay improvements. Both
+are offered upstream; once they are merged there, use the original.
 
 | Change | How to use | Upstream |
 |---|---|---|
-| **Direct stick aim.** On foot, the right stick turns the view directly, without the game's axis snapping, turn ramp-up and slowdown over targets. Aiming with a controller feels much smoother. | In `fci.ini` next to the game, change `;controls-stick-aim = 0` to `controls-stick-aim = 1`. Speed, dead zone, curve and boost are set right below it. | [#41](https://github.com/VinceIP/fci-recomp/pull/41) |
-| **Longer weapon ranges.** On the Xbox a Beretta M9 does not hit past 30 m, and most guns stop at 30 to 70 m. This raises them: pistols to 150 to 180 m, SMGs to 250 m, rifles and machine guns to 600 to 800 m, sniper rifles to 1000 and 1500 m. | After building, run `build\python\tools\python.exe -B tools\weapon_range.py` in this folder (both games at once). `--restore` puts the original ranges back. | [#42](https://github.com/VinceIP/fci-recomp/pull/42) |
-| **Build fix for non-English Windows.** On German Windows, for example, the build did not find Visual Studio and downloaded the compiler instead. | Nothing to do. | [#40](https://github.com/VinceIP/fci-recomp/issues/40) |
+| **Direct stick aim.** On foot, the right stick turns the view directly, without the game's axis snapping, turn ramp-up and slowdown over targets. Aiming with a controller feels much smoother. | In the launcher: Settings, "Controller right stick", turn on "Direct stick aim". Speed, dead zone, curve and boost are right below it. Without the launcher: in `fci.ini` next to the game, change `;controls-stick-aim = 0` to `controls-stick-aim = 1`. | [#41](https://github.com/VinceIP/fci-recomp/pull/41) |
+| **Longer weapon ranges.** On the Xbox a Beretta M9 does not hit past 30 m, and most guns stop at 30 to 70 m. This raises them: pistols to 150 to 180 m, SMGs to 250 m, rifles and machine guns to 600 to 800 m, sniper rifles to 1000 and 1500 m. | After building, run `build\python\tools\python.exe -B tools\weapon_range.py` in this folder (both games at once). `--restore` puts the original ranges back. Updates keep it. | [#42](https://github.com/VinceIP/fci-recomp/pull/42) |
 
-To use it, download the zip of this fork's [latest release](../../releases/latest) and follow Setup below.
-The rest of this page is the original README.
+To use it, download the zip of this fork's [latest release](../../releases/latest) and follow Setup below. The
+fork's launcher looks for updates here, so an update keeps both changes; build problems are still reported to
+the original. The rest of this page is the original README.
 
 ---
 
@@ -34,7 +34,7 @@ Regardless of your stance on AI in software development, it's my hope that this 
 
 ## Status
 
-**Version 0.2.1** - Story mode map editors for Instincts and Evolution are working, but have not yet been thoroughly tested end-to-end. Please continue to report crashes and issues in the Discord or Github. Enhanced visual features powered by a DirectX 12 renderer are implemented. Mouse and keyboard controls have been implemented and are customizable. Enhanced features and options are matched for both separate titles.
+**Version 0.2.3** - Story mode map editors for Instincts and Evolution are working, but have not yet been thoroughly tested end-to-end. Please continue to report crashes and issues in the Discord or Github. Enhanced visual features powered by a DirectX 12 renderer are implemented. Mouse and keyboard controls have been implemented and are customizable. Enhanced features and options are matched for both separate titles.
 
 ## Features
 
@@ -68,6 +68,15 @@ Some features are not yet complete or working as intended, but are planned.
 
 ## Setup
 
+### With the launcher
+
+1. Download the zip of the [latest release](../../releases/latest) and extract it.
+2. Start `FCI Launcher.exe`. Windows may warn that it's from an unknown publisher, since the launcher isn't signed. Click "More info", then "Run anyway".
+3. Choose your disc image (or drop it on the window), then Build. Tick the map editor box to build it too.
+4. Launch your game.
+
+### With BuildGame.cmd
+
 1. Download the zip of the [latest release](../../releases/latest) and extract.
 2. Drag your disc image (or the folder with the disc's files) onto `BuildGame.cmd`.
 3. Wait for it to finish: expect 15-25 minutes depending on your hardware, plus downloads for required
@@ -78,7 +87,7 @@ process.
 5. Start `FarCryInstincts\FarCryInstincts.exe`, or `FarCryEvolution\FarCryEvolution.exe`.
 6. Repeat the above steps for each title.
 
-Save data and log files are stored in `%APPDATA%\fci-recomp` by default. This directory can be changed by modifying `fci.ini`. Note that there are separate .ini files for each title. The `build` folder is only needed for rebuilding and can be deleted.
+Save data and log files are stored in `%APPDATA%\fci-recomp` by default. This directory can be changed by modifying `fci.ini`. Note that there are separate .ini files for each title. The `build` folder contains an object cache meant to keep future updates faster in some cases. It can be deleted safely, but keep it to speed up future updates.
 
 Developers can run the same steps via Python: `python fci-recomp.py setup <disc>`
 (`--help` lists the options).

@@ -1,5 +1,55 @@
 # Changelog
 
+## [0.2.3-og1] - 2026-10-26
+
+olivergrosche's fork of 0.2.3.
+
+### Added
+
+- Direct stick aim on foot, off by default: "Direct stick aim" in the launcher's settings (Controller right
+  stick), or `controls-stick-aim = 1` in fci.ini. The right stick turns the view directly, past the game's axis
+  snapping, turn ramp-up and slowdown over targets; speed, dead zone, curve, rim boost and invert are options
+  next to it (upstream PR #41).
+- Longer weapon ranges: `build\python\tools\python.exe -B tools\weapon_range.py` raises each gun's hit range
+  in both games' lua.dat (pistols 150 m instead of 30 m, rifles 600 m instead of 45 to 70 m); `--restore` undoes
+  it. An update keeps the patched lua.dat (upstream PR #42, notes in re/notes/WEAPONS.md).
+
+### Changed
+
+- The launcher looks for updates in this fork's releases, so updating keeps these changes. Its build failure
+  reports still go to the original's issues.
+- The build fix for Windows in other languages from 0.2.1-og1 is the original's own since 0.2.2 (issue #40).
+
+Built against xboxrecomp 193e2995 and Xbox XBE Recomp 65e959d4. Supported discs: Far Cry Instincts
+title 55530008, version 1 (`data/disc.json`); Far Cry Instincts Evolution title 55530060, version 3
+(`data/evolution/disc.json`).
+
+## [0.2.3] - 2026-10-26
+
+### Fixed
+
+- Fixed an issue where building without Visual Studio installed would fail with "the Windows SDK package lacks [...]", after Microsoft changed how it lists the SDK's files.
+- Fixed certain build errors not containing enough information.
+- The launcher now offers to move itself to `C:\Games\fci-recomp` when its folder is in OneDrive or is otherwise a bad place to build.
+
+## [0.2.2] - 2026-10-26
+
+### Added
+
+- Added the fci-recomp launcher. Allows building, updating, and launching fci-recomp titles, plus changing in-game settings, from one GUI. Editing .ini files by hand or dealing with the old command line BuildGame.cmd is no longer necessary. Building the old way is still supported if preferred.
+- Added support for building updates a little faster by saving a build object cache, so future updates with simple bugfixes don't require a painfully slow, full rebuild.
+
+### Fixed
+
+- Visual Studio wasn't found on Windows in other languages, so the build downloaded Microsoft's compiler instead (#40).
+- Building into a new folder at the root of a drive failed the permission check (#40).
+- The build failed with "Access is denied" when VS Code or an antivirus had the downloaded files open (#40).
+- Trying to build with an unsupported disc now gives a more detailed and informative error output.
+
+Built against xboxrecomp 193e2995 and Xbox XBE Recomp 65e959d4. Supported discs: Far Cry Instincts
+title 55530008, version 1 (`data/disc.json`); Far Cry Instincts Evolution title 55530060, version 3
+(`data/evolution/disc.json`).
+
 ## [0.2.1-og1] - 2026-10-25
 
 olivergrosche's fork of 0.2.1.
