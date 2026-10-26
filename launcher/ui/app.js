@@ -19,7 +19,8 @@ const ICONS = {
   folder: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.6l2 2h8.4A1.5 1.5 0 0 1 21 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>',
 };
 const DISCORD = "https://discord.gg/UhRnapmH2j";
-const GITHUB = "https://github.com/VinceIP/fci-recomp";
+const GITHUB = "https://github.com/olivergrosche/fci-recomp";
+const UPSTREAM = "https://github.com/VinceIP/fci-recomp";
 
 const S = {
   ov: null, // overview()
@@ -668,7 +669,7 @@ async function renderLogs() {
   );
 }
 for (const b of document.querySelectorAll("[data-open]")) b.addEventListener("click", () => open(b.dataset.open));
-const LINKS = { discord: DISCORD, issues: GITHUB + "/issues" };
+const LINKS = { discord: DISCORD, issues: UPSTREAM + "/issues" };
 for (const b of document.querySelectorAll("[data-link]")) b.addEventListener("click", () => open("url:" + LINKS[b.dataset.link]));
 
 // ---------------------------------------------------------------- settings
@@ -683,6 +684,9 @@ const LABELS = {
   "gfx-shadow-filter": "Soft shadows", "gfx-object-draw-distance": "Object draw distance", "gfx-object-lod-distance": "Object detail distance",
   "gfx-foliage-lod": "Foliage detail distance", "controls-mouse-keyboard": "Mouse and keyboard", "controls-mouse-aim": "Direct mouse aim",
   "controls-mouse-y-scale": "Vertical sensitivity", "controls-mouse-invert-y": "Invert vertical look", "controls-mouse-capture": "Capture the mouse",
+  "controls-stick-aim": "Direct stick aim", "controls-stick-speed": "Stick turn speed", "controls-stick-y-scale": "Stick vertical speed",
+  "controls-stick-deadzone": "Stick dead zone", "controls-stick-curve": "Stick response curve", "controls-stick-boost": "Stick rim boost",
+  "controls-stick-boost-ms": "Stick rim boost time", "controls-stick-invert-y": "Invert vertical stick look",
 };
 // shorter names for choices the ini explains at length
 const CHOICES = {

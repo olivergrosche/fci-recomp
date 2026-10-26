@@ -144,7 +144,7 @@ pub fn build(log: &Path, label: &str, error: &str) -> Report {
     let title: String = title.chars().take(90).collect();
     let mut url = format!(
         "https://github.com/{}/issues/new?template=bug_report.yml&title={}&stop={}&version={}&system={}&what={}",
-        net::REPO,
+        net::ISSUES,
         enc(&title),
         enc(&error.chars().take(1500).collect::<String>()),
         enc(&version),

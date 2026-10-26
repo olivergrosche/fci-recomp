@@ -10,7 +10,10 @@ use std::time::Duration;
 
 use crate::paths::{self, Source};
 
-pub const REPO: &str = "VinceIP/fci-recomp";
+/// releases (updates) come from this fork, so an update keeps its changes
+pub const REPO: &str = "olivergrosche/fci-recomp";
+/// build failures go to the original's issues (the fork has none, and the build is the original's)
+pub const ISSUES: &str = "VinceIP/fci-recomp";
 
 fn agent() -> ureq::Agent {
     ureq::AgentBuilder::new()
