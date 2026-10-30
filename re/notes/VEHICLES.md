@@ -112,10 +112,66 @@ on the Humvee 2.51 m per unit (0.93 of it across), on the pickup 2.33 (0.9 acros
 Browning's frame meet where the chaingun's pitch axis is (0, 0.596, -0.065) from `turret` (the gun's barrels on the
 Browning's muzzle, as the gunner's view needs).
 
+## Seats
+
+The seats are the eye bones (the scripts' seat tables name them `EyesPos`; the library asks for
+`GetUserEyesPosHelperName`): `eye_pos` (driver), `passenger1_eye_pos` (front), `passenger2/3_eye_pos` (rear, on
+the pickup's bed sides 2.05 m up), `gunner_eye_pos`. The game draws both sides of a triangle, so any panel near
+the camera fills the view dark, and a shell seen from inside is lit by its outside's normals (black in the shade;
+the game's own trucks have inner panels).
+
+### The camera, measured
+
+The camera is not on the eye bone. Measured in 23_DUNEC (car_arena, pickup, left front seat `eye_pos`, the user's
+save; captures of the Warthog build and of the original pickup, 2026-10-30), in the pickup's model space:
+
+| look | camera | view (model) | from `eye_pos` (-0.400, 0.326, 1.663) |
+|---|---|---|---|
+| ahead | (-0.380, 0.595, 1.673) | (0.00, 1.00, 0.00) | 0.270 m |
+| 80 deg right | (-0.127, 0.345, 1.673) | (0.98, 0.17, 0.00) | 0.274 m |
+| 100 deg right | (-0.135, 0.249, 1.673) | (0.98, -0.17, 0.00) | 0.276 m |
+| 100 deg left | (-0.679, 0.294, 1.673) | (-0.99, -0.17, 0.00) | 0.281 m |
+
+So the camera sits 0.27 to 0.28 m before the eye bone in the view's level direction (a head turning on a neck)
+and 0.010 m above it; the original pickup gives the same numbers. The stick turned fully either way gave 100 deg,
+likely the limit. Pitch was 0 in all four (not yet measured: whether looking down moves the camera).
+
+How (fci-modsrc `halo/vehicles/camera.py <config> <model> <capture>...`): the capture's `frame.txt` lists every
+draw with its state and, for draws of 4 vertices or fewer, the vertex shader constants (D3D registers; hardware
+index minus 96). In the frame's main view every draw carries the same view-projection in c71..c74 (rows; the
+shadow pass has its own, orthographic, with the light's position in c61), the camera's world position in c61
+and its own world matrix in c75..c77 (rows, translation last). The view's direction is the one along which clip
+x and y are both 0: the cross product of the view-projection's first two rows (signed so that clip w grows).
+The vehicle's world matrix comes from its own small draws: the pickup's placeholder triangles on Hull2 (count 3,
+vertex shader 01585401, in the depth pass) carry a rotation with determinant 1 and a translation at the
+vehicle's origin, 1.3 to 2.2 m under the camera. Camera and direction go into model space with that matrix's
+inverse (rotation transposed). The body's own draws are too large for the dump; `XBE_CAPTURE_VS=<its vertex
+shader>` makes the recomp dump a shader's constants on its draw lines (` vc<hardware register>`, D3D + 96),
+which camera.py reads the same way (not needed so far). camera.py then renders the built and the game's model
+from the measured camera beside the game's frame (checked: the original pickup's roof, posts and crates land
+where the game's frame shows them) and casts rays over the view for the nearest triangle. For the Warthog build of 3aecf5d it reproduced the band the user saw
+(turned right: 100 % of the lower half within 0.3 m, the nearest at 0.10 m along the view; ahead and turned
+left clear): the top of a 15 cm beam along the middle between the front seats at eye height (x -0.074..0.074,
+y -0.06..0.54, z 1.57..1.68), 0.06 m from the camera.
+
+### What the importer does about it
+
+vehicle_import's `clear` keeps the drawn geometry of the given bones 0.3 m from the eye bones and, with
+`orbit` 0.28, from the level circle of that radius round each (every place the camera can be); a cut piece
+goes whole when small, a large one keeps its largest connected remainder. `inner` gives the body a lit inside
+(each triangle again, turned round, 1 cm in, normals turned in and tipped up), `lower` brings the walls beside
+a seat down to 0.6 m under its eye. check.py draws every seat from the measured camera model (ahead, 80 and
+100 deg each way, back, 30 deg down). Turret parts (`turret_mesh`) are not cleared: they turn with the gun
+about `turret` (as the game's own Browning, whose barrels sweep the rear seats); clearing them for every turret
+angle cut the Warthog's mount column in the Humvee away (the gun floated).
+
 ## Open
 
-- Not loaded in the game yet: whether `turret_mesh` is drawn on `turret` (assumed from its shape) and turns with
-  the gun, and where the first-person Browning is drawn.
+- Not measured yet: the other seats' cameras (assumed the same: eye bone + 0.27 to 0.28 m along the view), the
+  head-turn limit beyond 100 deg, whether the camera moves when looking down, and whether `turret_mesh` is
+  drawn on `turret` and turns with the gun (assumed from its shape). In the Humvee the Warthog's mount column
+  stands between the front seats: 0.14 to 0.16 m from a front seat's camera looking 100 deg inward with the
+  gun ahead, 0.10 to 0.12 m when the gun turns toward a seat.
 - The seats stay the template's: the Humvee's gunner stands 0.57 m below the Warthog's deck between the seat
   backs (legs in the body), the pickup's gunner 0.15 m below its bed; the pickup's driver sits 0.14 m above
   the Warthog's seat. `helpers` can move helper bones, untested.

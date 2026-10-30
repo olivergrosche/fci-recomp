@@ -3,6 +3,7 @@
 import base64
 import io
 import json
+import math
 from pathlib import Path
 import struct
 import sys
@@ -268,3 +269,66 @@ def test_a_model_s_own_texture_settings_make_its_own_atlas(tmp_path):
     vi.build(cfg, tmp_path)
     bright = Image.open(io.BytesIO(xbt.to_dds(df.read_bytes()))).convert("RGB").getpixel((5, 5))
     assert sum(bright) > 1.5 * sum(plain)
+
+
+def test_clear_leaves_out_what_comes_near_a_seat_and_what_that_cuts_off(tmp_path):
+    cfg = config(tmp_path)
+    cfg["models"][0]["clear"] = {"around": ["hull2"], "radius": 0.35, "bones": ["hull2"]}
+    vi.build(cfg, tmp_path)
+    m = built(tmp_path)
+    # the hull box's floor passes 0.28 m under the hull2 bone: the cut takes it, and the rest of that small
+    # piece goes with it (it would float): only the placeholder is left
+    sm = vi.bone_submeshes(m, vi.bone_index(m, "hull2"))[0]
+    assert len(xbg.strip_triangles(sm.strip)) == 1
+    assert len(xbg.strip_triangles(vi.bone_submeshes(m, vi.bone_index(m, "Wheel1"))[0].strip)) == 12
+
+
+def test_orbit_clears_round_the_circle_the_head_turns_on(tmp_path):
+    cfg = config(tmp_path)
+    # the hull2 bone (0, 0, 1) stands in for an eye inside the hull box (x within 1.33, floor 0.28 m under it):
+    # 0.2 m round it reaches no wall; turned 1.2 m round it, the camera comes within 0.13 m of the side walls
+    cfg["models"][0]["clear"] = {"around": ["hull2"], "radius": 0.2, "bones": ["hull2"]}
+    vi.build(cfg, tmp_path)
+    m = built(tmp_path)
+    assert len(xbg.strip_triangles(vi.bone_submeshes(m, vi.bone_index(m, "hull2"))[0].strip)) == 12  # the box, whole
+    cfg["models"][0]["clear"]["orbit"] = 1.2
+    vi.build(cfg, tmp_path)
+    m = built(tmp_path)
+    assert len(xbg.strip_triangles(vi.bone_submeshes(m, vi.bone_index(m, "hull2"))[0].strip)) == 1  # placeholder
+    points = vi.orbits([(0.0, 0.0, 1.0)], 0.28, steps=8)
+    assert len(points) == 9 and points[0] == (0.0, 0.0, 1.0)
+    assert all(abs(math.hypot(x, y) - 0.28) < 1e-9 and z == 1.0 for x, y, z in points[1:])
+
+
+def test_point_triangle_distance():
+    a, b, c = (0, 0, 0), (1, 0, 0), (0, 1, 0)
+    assert abs(vi.point_triangle((0.2, 0.2, 0.5), a, b, c) - 0.5) < 1e-9  # above the face
+    assert abs(vi.point_triangle((2, 0, 0), a, b, c) - 1.0) < 1e-9  # past a corner
+    assert abs(vi.point_triangle((0.5, -1, 0), a, b, c) - 1.0) < 1e-9  # beside an edge
+
+
+def test_inner_gives_the_shell_a_lit_inside(tmp_path):
+    cfg = config(tmp_path)
+    cfg["models"][0]["parts"][-1]["inner"] = {"offset": 0.01, "up": 1.2}
+    vi.build(cfg, tmp_path)
+    m = built(tmp_path)
+    sm = vi.bone_submeshes(m, vi.bone_index(m, "hull2"))[0]
+    assert len(xbg.strip_triangles(sm.strip)) == 24  # the box's 12 and their insides
+    rot, _ = m.bone_matrix(vi.bone_index(m, "hull2"))
+    ups = [xbg.mat_vec(rot, v["normal"])[2] for v in sm.vertices]
+    assert sum(u > 0.3 for u in ups) > len(ups) / 2  # the insides of the walls and the roof face up
+
+
+def test_lower_brings_walls_beside_a_seat_down(tmp_path):
+    cfg = config(tmp_path)
+    # Wheel1's bone stands in for a seat: (-0.85, 1.6, 0.45); the hull's corners beside it, outboard, go down
+    cfg["models"][0]["lower"] = {
+        "around": ["Wheel1"],
+        "below": -1.0,
+        "reach": 5.0,
+        "outboard": -5.0,
+        "bones": ["hull2"],
+    }
+    vi.build(cfg, tmp_path)
+    lo, hi = vi.box_of(placed_points(built(tmp_path), "hull2"))
+    assert abs(hi[2] - (0.45 + 1.0)) < 1e-3  # no higher than 1.0 above that "eye"

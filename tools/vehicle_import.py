@@ -12,7 +12,7 @@ cylinders, the hull boxes, the seats and the gun's helpers do not move; only wha
 The config (paths relative to it):
 
   {
-    "game": "D:/FarCry Instincts/FarCryEvolution/game",  read only: the templates come from its archives
+    "game": "../../FarCryEvolution/game",                read only: the templates come from its archives
     "archives": ["levels/*", "farcryed"],                 where to write, of the archives (paths without
                                                           .dat) that hold a model (default: all of them)
     "out": "../../mods/evolution/halo-warthog-humvee",    the mod folder: <out>/<archive>/<path>, mod.ini
@@ -49,6 +49,22 @@ part that selects it):
                                                           wreck's burn marks in its alpha)
     "offset": [0, 0, -0.1]                                metres added to the body fit (a wreck sits lower)
     "double_sided": true                                  the triangles get a back (debris seen from all sides)
+    "inner": {"offset": 0.01, "up": 1.2}                  an inside: each triangle again, turned round, "offset"
+                                                          metres in along its normals, its normals turned in and
+                                                          tipped up by "up" (lit by the sky); the games draw
+                                                          both sides, a shell seen from inside comes out black
+
+A model's "clear": {"around": ["eye_pos", "passenger1_eye_pos"], "radius": 0.3, "bones": ["hull2"]} leaves out
+the triangles of those bones that come within the radius of those helper bones (bind pose): the seats' eyes
+keep a clear view (the games draw back faces too: a panel next to a camera fills the screen dark); "orbit": 0.28
+clears round the level circle of that radius about each eye too, where the camera goes as the head turns (the
+games put it 0.27 to 0.28 m before the eye bone in the view's direction, measured). What the cut leaves floating
+goes too: a small connected piece (up to 50 triangles) it cuts into goes whole, a larger one keeps only its
+largest connected remainder (a windshield frame cut at its pillars loses its top bar).
+
+"lower": {"around": ["eye_pos"], "below": 0.55, "reach": 0.45, "outboard": 0.1, "bones": ["hull2"]} brings
+those bones' vertices beside a seat (outboard of its eye, within "reach" along the vehicle) down to "below"
+under the eye: the seat looks over the side wall.
 
 Without "wheels" there is no body fit and every part needs "anchor" and "scale" (a gun).
 
@@ -438,12 +454,26 @@ def convert(template, mcfg, src, body_cfg, place_uv, base):
     meshes = {sm.index: ([], []) for sm in model.submeshes}
     frames = {b: model.bone_matrix(b) for b in bones}
     nearest_color = {i: Nearest(model, model.submeshes[i]) for i in set(target.values())}
+    lower = mcfg.get("lower", {})  # side walls beside the seats no higher than "below" under the eye
+    lower_at = [model.bone_matrix(bone_index(model, b))[1] for b in lower.get("around", ())]
+    lower_bones = {bone_index(model, b) for b in lower.get("bones", ())}
+    clear = mcfg.get("clear", {})  # room around the seats' eyes: no triangle of these bones comes nearer
+    clear_at = orbits(
+        [model.bone_matrix(bone_index(model, b))[1] for b in clear.get("around", ())], clear.get("orbit", 0)
+    )
+    clear_radius = clear.get("radius", 0.3)
+    clear_bones = {bone_index(model, b) for b in clear.get("bones", ())}
+    cleared = 0
     built = {}
     for n, tris in sorted(by_part.items()):
         part = parts[n]
         bone = bone_index(model, part["bone"])
         selected = [prims[k]["pos"][i] for k, t in tris for i in prims[k]["tris"][t]]
         place = part_place(part, body, dst, tires, prims, model, selected)
+        if bone in clear_bones and clear_at:
+            kept = cleared_room(tris, prims, piece, place, clear_at, clear_radius)
+            cleared += len(tris) - len(kept)
+            tris = kept
         rot, pos = frames[bone]
         back = xbg.transpose(rot)
         verts, out = meshes[target[bone]]
@@ -460,6 +490,8 @@ def convert(template, mcfg, src, body_cfg, place_uv, base):
                 if key not in remap:
                     u, v = p["uv"][i]
                     world = place.point(p["pos"][i])
+                    if bone in lower_bones:
+                        world = lowered(world, lower_at, lower)
                     vert = {
                         "pos": xbg.mat_vec(back, xbg.sub(world, pos)),
                         "uv": (
@@ -479,6 +511,18 @@ def convert(template, mcfg, src, body_cfg, place_uv, base):
                 idx.append(remap[key])
             a, b, c = idx
             out.append((a, c, b))  # the games' front faces turn the other way
+            if "inner" in part:  # an inside, a little in from the outside and lit from above
+                inner = part["inner"]
+                lift, offset = inner.get("up", 1.2), inner.get("offset", 0.01)
+                inside = []
+                for i in (a, b, c):
+                    v = dict(verts[i])
+                    n = v["normal"]
+                    v["pos"] = tuple(q - offset * m for q, m in zip(v["pos"], n))
+                    v["normal"] = xbg.unit(xbg.add(tuple(-x for x in n), xbg.mat_vec(back, (0.0, 0.0, lift))))
+                    verts.append(v)
+                    inside.append(len(verts) - 1)
+                out.append(tuple(inside))  # (a, b, c): the other way round from (a, c, b)
             if part.get("double_sided"):  # the games draw one side: a back with the normals turned
                 back_idx = []
                 for i in (a, b, c):
@@ -519,10 +563,122 @@ def convert(template, mcfg, src, body_cfg, place_uv, base):
     counts = ", ".join(
         f"{model.bones[b].name} {len(xbg.strip_triangles(new.submeshes[target[b]].strip))}" for b in bones
     )
-    text = f"{len(owner)} triangles ({counts}); position scale {new.scale:.6g}" + (
-        f"; helpers moved: {', '.join(moved)}" if moved else ""
+    text = (
+        f"{len(owner) - cleared} triangles ({counts}); position scale {new.scale:.6g}"
+        + (f"; {cleared} cleared round {len(clear_at)} camera points" if clear_at else "")
+        + (f"; helpers moved: {', '.join(moved)}" if moved else "")
     )
     return bytes(rebuilt), text, built
+
+
+def orbits(eyes, radius, steps=16):
+    """each eye and, with a radius, points on the level circle round it: where a seat's camera goes as the head
+    turns (in the games it sits 0.27 to 0.28 m before the eye bone in the view's direction)"""
+    out = []
+    for e in eyes:
+        out.append(tuple(e))
+        if radius:
+            for k in range(steps):
+                a = 2 * math.pi * k / steps
+                out.append((e[0] + radius * math.cos(a), e[1] + radius * math.sin(a), e[2]))
+    return out
+
+
+def lowered(p, seats, lower):
+    """a point beside a seat (outboard of its eye by "outboard", within "reach" along the vehicle) brought
+    down to "below" under the eye, so that the seat looks over the wall"""
+    below, reach, outboard = lower.get("below", 0.55), lower.get("reach", 0.45), lower.get("outboard", 0.1)
+    x, y, z = p
+    for e in seats:
+        side = 1.0 if e[0] >= 0 else -1.0
+        if abs(y - e[1]) < reach and side * (x - e[0]) > outboard and z > e[2] - below:
+            z = e[2] - below
+    return (x, y, z)
+
+
+SMALL_PIECE = 50  # triangles: a piece this small goes whole when the room around a seat cuts into it
+
+
+def cleared_room(tris, prims, piece, place, around, radius):
+    """the triangles left when those within radius of the points (placed) go, and what that cut off: a small
+    piece goes whole, a large one keeps its largest connected remainder (no floating remnants)"""
+    cut = {
+        (k, t)
+        for k, t in tris
+        if any(
+            point_triangle(c, *(place.point(prims[k]["pos"][i]) for i in prims[k]["tris"][t])) < radius for c in around
+        )
+    }
+    if not cut:
+        return tris
+    size = {}
+    for k, t in tris:
+        size[piece[k][t]] = size.get(piece[k][t], 0) + 1
+    touched = {piece[k][t] for k, t in cut}
+    keep = [
+        (k, t)
+        for k, t in tris
+        if (k, t) not in cut and not (piece[k][t] in touched and size[piece[k][t]] <= SMALL_PIECE)
+    ]
+    # the rest of each large touched piece: its largest connected remainder
+    parent = {}
+
+    def find(x):
+        while parent.setdefault(x, x) != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def corner(k, i):
+        return tuple(round(c, 3) for c in prims[k]["pos"][i])
+
+    rest = [(k, t) for k, t in keep if piece[k][t] in touched]
+    for k, t in rest:
+        a = find(corner(k, prims[k]["tris"][t][0]))
+        for i in prims[k]["tris"][t][1:]:
+            b = find(corner(k, i))
+            if a != b:
+                parent[b] = a
+    groups = {}
+    for k, t in rest:
+        groups.setdefault((piece[k][t], find(corner(k, prims[k]["tris"][t][0]))), []).append((k, t))
+    largest = {}
+    for (pc, _root), members in groups.items():
+        if len(members) > len(largest.get(pc, ())):
+            largest[pc] = members
+    stay = {kt for members in largest.values() for kt in members}
+    return [(k, t) for k, t in keep if piece[k][t] not in touched or (k, t) in stay]
+
+
+def point_triangle(p, a, b, c):
+    """the distance from point p to triangle abc"""
+    ab, ac, ap = xbg.sub(b, a), xbg.sub(c, a), xbg.sub(p, a)
+    d1, d2 = wi.dot(ab, ap), wi.dot(ac, ap)
+    if d1 <= 0 and d2 <= 0:
+        return math.dist(p, a)
+    bp = xbg.sub(p, b)
+    d3, d4 = wi.dot(ab, bp), wi.dot(ac, bp)
+    if d3 >= 0 and d4 <= d3:
+        return math.dist(p, b)
+    vc = d1 * d4 - d3 * d2
+    if vc <= 0 and d1 >= 0 and d3 <= 0:
+        v = d1 / (d1 - d3)
+        return math.dist(p, xbg.add(a, tuple(v * x for x in ab)))
+    cp = xbg.sub(p, c)
+    d5, d6 = wi.dot(ab, cp), wi.dot(ac, cp)
+    if d6 >= 0 and d5 <= d6:
+        return math.dist(p, c)
+    vb = d5 * d2 - d1 * d6
+    if vb <= 0 and d2 >= 0 and d6 <= 0:
+        w = d2 / (d2 - d6)
+        return math.dist(p, xbg.add(a, tuple(w * x for x in ac)))
+    va = d3 * d6 - d5 * d4
+    if va <= 0 and d4 - d3 >= 0 and d5 - d6 >= 0:
+        w = (d4 - d3) / ((d4 - d3) + (d5 - d6))
+        return math.dist(p, xbg.add(b, tuple(w * x for x in xbg.sub(c, b))))
+    total = va + vb + vc
+    v, w = vb / total, vc / total
+    return math.dist(p, xbg.add(a, tuple(v * x + w * y for x, y in zip(ab, ac))))
 
 
 class Nearest:
