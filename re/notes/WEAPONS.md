@@ -70,3 +70,60 @@ Played by hand: shots land well past the old limits, and enemies hold fire until
 
 Open: where the engine reads `distance` and `distance_max`, and how the damage falls between them
 (full damage up to `distance` is read from the name).
+
+# Weapon scripts as mod files (tools/lua_patch.py)
+
+Found 2026-10-30 from both games' `lua.dat`, the XBE and the levels' archives.
+
+## Names
+
+A script's name in `lua.dat` is its path with `_compiled` after `.lua`:
+`\scripts\default\entities\weapons\p90.lua_compiled`, `\scripts\default\gamerules.lua_compiled`. With that
+rule the XBE's paths and the scripts' own strings name 323 of Instincts' 404 scripts and 341 of Evolution's
+448, among them every weapon script (`lua_patch.py list`). A mod replaces one as
+`mods\<mod>\lua\scripts\default\entities\weapons\p90.lua_compiled`.
+
+## Instructions
+
+Lua 4.1 (work) as the XBE calls it: op = w & 0x3F, C = (w >> 6) & 0x3FF (10 bits), B = (w >> 16) & 0xFF,
+A = w >> 24; Bx = (w >> 6) & 0x3FFFF. An RK operand (C) from 250 up is constant C - 250, so up to 773
+(checked: all 427 and 1,483 table accesses with bit 15 set name a string constant). Opcodes in order:
+
+    MOVE LOADK LOADINT LOADNIL LOADUPVAL GETGLOBAL GETTABLE SETGLOBAL SETTABLE NEWTABLE SELF ADD SUB MUL DIV
+    POW UNM NOT CONCAT JMP CJMP TESTEQ TESTNE TESTLT TESTLE TESTGT TESTGE TESTT TESTF NILJMP CALL RETURN
+    FORPREP FORLOOP TFORPREP TFORLOOP SETLIST SETLIST0 CLOSURE
+
+SETTABLE: R(B)[RK(C)] = R(A); GETTABLE: R(A) = R(B)[RK(C)]; LOADNIL: R(A) .. R(B) = nil; NEWTABLE A Bx (Bx
+the size); SETLIST A Bx: R(A)[Bx - Bx % 32 + i] = R(A + i) for i = 1 .. Bx % 32 + 1. Number constants are
+tag 2 (4-byte float), strings tag 3. (tools/luadat.py's note on SETTABLE's table register and its 9-bit key
+read are off; they do not matter for the range fields it reads.) Every weapon script's main function is
+straight code without jumps: a constructor into R0, SETGLOBAL, `CreateBasicWeapon(...)`, more fields.
+
+## Effect fields (FireParams[n], read by BasicWeapon's fire code)
+
+| Field | | Use |
+|---|---|---|
+| `BulletTrail` | colorA, colorB (r, g, b), speed, alphaMul, length, head_length, width, texture | if set (and not `bUseSFX`): `Particle:CreateParticleLightLine(..., dir, dist, BulletTrail)` |
+| `MuzzleParticle` | effect, bulletCases (particle effect names) | `AttachMuzzleEffect(hand, ..., effect)`; `SpawnEffectFromWeaponBone(..., bulletCases)` only if bulletCases is set |
+| `MuzzleLight` | color, diffuseMul, radius | if set: `SpawnMuzzleLight(..., color, diffuseMul, radius)` |
+
+Not every weapon has all: the suppressed Beretta has neither tracer nor light, BerrettaNoSup no light, the
+Mortar (MK19) no tracer. Tracer textures (`objects_xbox\weapons\bullet_tracer\bullet_tracer03.xbt`, an orange
+streak, ten guns; `bullet_tracer04`, the scoped rifles and the blowgun) are in `weaponpack`.
+
+Effect names are `<library>.<effect>`; the particle library is one XML file (`<ParticleLibrary>`, 433 effects
+in Instincts' 01_Beach) in each level's archive, every level holding all weapons' effects. A muzzle flash is a
+particle whose `Geometry` is a model in `weaponpack` (`animations\weapons\first\mk19\mk19_muzzle_flash.xbg`) with
+its own textures (`mk19_muzzle_flash_a.xbt`, `_b.xbt`), tinted by the particle's StartColor and EndColor. Flash
+models shared: Glock and Desert Eagle, P90 and MP5. A level's `<level>_DepLoad.xml` lists per weapon the files
+and effects it needs (models, `.xba`, effects as type 10, the tracer texture as type 1).
+
+## The tool
+
+`lua_patch.py` reads a script into its functions (written back byte for byte: all 852 scripts of both
+games), follows the main function's table building and changes named fields: a value's load instruction
+is rewritten in place (LOADINT, LOADK with a constant added when missing, LOADNIL for nil), and a field the
+script does not set is added by code right after its table's NEWTABLE (registers above it are free there; the
+stack size grows when needed). Paths go from the weapon's table (`FireParams[*].MuzzleLight.color`). `patch`
+reads every written file back and stops when anything else differs; `diff` shows what a mod's scripts change.
+The Halo weapon mods use it (fci-modsrc `halo/weapons`, `"lua"` in their configs).
