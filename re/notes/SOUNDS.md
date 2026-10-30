@@ -40,7 +40,8 @@ Event (0x48): 0x00 id, 0x04 type.
 |---|---|---|
 | 1 | play | 0x08 the resource's index; 0x10 1.0 (16.16); 0x1C, 0x24, 0x28 distances in 16.16 (5, 50, 80 on the MP5's fire) |
 | 4 | stop and play | 0x08 the index of an event to stop, 0x0C one to play, 0x10 0.1 or 0.15 (16.16, presumably the fade): the `FireEndSoundEvent` of all seven automatic weapons stops its `FireSoundEvent` and plays the burst's end |
-| 2, 6, 7, 8, 10 | | not analysed |
+| 2 | stop | 0x08 the index of the event to stop: the creatures' `IdleAndWalk_Stop` stops their `IdleAndWalk_Start` loop |
+| 6, 7, 8, 10 | | not analysed |
 
 Resource (0x58): 0x00 id, 0x04 type. Fields a type does not use hold leftovers (pointers, text).
 
@@ -134,3 +135,105 @@ SNR on the Halo sounds).
 Open: whether the engine plays a former stream from the bank in the game (a mono RAM voice where it had a
 stereo stream; the largest built bank, 184 KB, is smaller than the game's own largest, 838 KB); the event
 and resource types marked not analysed; HDsound's entries; stream.ss2's IMA format.
+
+## Enemy voices
+
+Found 2026-10-30 from both games' banks, the sound pack scripts in lua.dat and the levels' mission XML.
+
+### The banks
+
+The dialogue banks come once per language, `\sounds_dvd\<language>\<bank>.sb2` with `english`, `french`,
+`german`, `italian` and `spanish` (the same events and resources in each; each one's offsets fit its
+language's `.LS2`). Their sounds stream from `sounds_xb\<Language>\GameCommon.LS2` or `SingleMaps.LS2`
+(Evolution: `fc15_pirates.LS2`, `fc15_rebels.LS2`, `fc15_ferals.LS2`), mono Xbox ADPCM at 16000 Hz; none
+lies in the bank. The creatures' banks are not per language and stream from `GameCommon.SS2` at 24000 Hz, a
+few sounds in the bank. The XBE names `Voices_Merc1` to `Voices_Merc9` itself (and `Voices_Merc%d`); the
+level scripts load the others (`Sound:LoadBank('FC15_Barks_Pirate_1')`).
+
+| Game | Bank | Group | Events, sounds | Whose |
+|---|---|---|---|---|
+| Instincts | `voices_merc1`, `_merc2`, `_merc3`, `_merc4`, `_merc6`, `_merc7`, `_merc9` | 540-543, 564, 565, 567 | 77-89, about 310 (570 s) each | the mercenaries' packs Merc1 to Merc10 |
+| | `voices_ops1` to `_ops3` | 843-845 | 87-90, about 235 | packs OPS1 to OPS3 (heavy mercenaries) |
+| | `voices_ubers1` to `_ubers4` | 873-876 | 2, 16 | packs Uber1 to Uber4 (Black Forest) |
+| | `voices_<level>_generic_mercs`, `voices_se_*`, `se_*` | 207-228, 747-836 | | a level's scripted lines and conversations, 2 to 12 s (loaded by its script) |
+| | `char_freak`, `char_sapper`, `char_chucker`, `char_uber` | 828, 650, 827, 829 | 18, 33, 34, 6 | the Trigens', the Chucker's and the Black Forest mercenaries' cries, pain, death, breathing |
+| Evolution | `fc15_barks_pirate_1` to `_5` | 877-881 | 87, 376 | packs Pirate1 to Pirate5 |
+| | `fc15_barks_rebel_1` to `_5` | 882-886 | 88, 381 | packs Rebel1 to Rebel5 |
+| | `fc15_barks_feral_1` to `_3` | 887-889 | 24-25, 105-111 | packs Feral1 to Feral3 |
+| | `fc15_char_feralwarrior` | 999 | 10, 9 | nine sounds of 3.5 to 4.4 s, played by nothing the scripts name |
+
+A voice event plays a random choice of 1 to 11 lines, some with silence among them; an event that plays only
+silence is a line the actor did not record (`voices_ops1` is silent on FIRST_HOSTILE_CONTACT and THREATEN).
+
+### Who speaks with which bank
+
+Each enemy of a level names a sound pack: `SoundPack="Merc6"` in `<Properties2>` of its `<Entity>` (also of
+a `CreatureGeneratorSpawnSpot`) in the level's mission XML. A pack is a script,
+`scripts\ai\packs\sound\<pack>.lua_compiled` in lua.dat (the AVAILABLE table lists them: Merc1-10, OPS1-3,
+Uber1-4, Worker1-4, Chucker, Crowe, Dragon, Freak, Sapper; Evolution adds Pirate1-5, Rebel1-5, Feral1-3,
+Doyle, Kade, Semeru, WorkerEx1-4):
+
+    SOUNDPACK.Merc1 = { FRIENDLY_FIRE = { Priority = 50, soundEventID = '35389442' }, ... }
+
+(Evolution's add `Relevance`; their names start with `MPACK_`). The id is an event of a bank, its group the
+bank: Merc1 and Merc5 speak with `voices_merc1`, Merc2 and Merc8 with `_merc2`, Merc3 and Merc10 with
+`_merc3`, the others with their own. Packs name other banks' events too (Merc4 one of `_merc1`'s, OPS3
+three of group 841's, Pirate5 some of Pirate4's, Feral2 and Feral3 some of Feral1's): the engine plays any
+loaded bank's event. The AI calls a pack event by name (`AI_DIES`, `GRENADE_SEEN`) with its priority; the
+model plays no part. Entities by model and pack in the campaign levels:
+
+| Game | Model | Packs |
+|---|---|---|
+| Instincts | `merc_prtoto01` (870), `merc_kit_03` (197), workers and scientists (30) | Merc1 to Merc10, spread evenly over all of them (a few with none) |
+| | `merc_kit_04` (109) | OPS1 to OPS3 (104), Merc1 and Merc4 (3) |
+| | `uber_kit_01` (46) | `Uber` (36: no such pack, they say nothing), Uber1 to Uber4 (8) |
+| | `freak_sapper_kit_01` (199), `chucker` (7) | Freak (73), Sapper (62); Chucker (6) |
+| | `crowe`, `doyle`, `krieger` | Merc1 (7), Merc9 (1) |
+| Evolution | `pirate_kit_01` (662), `_02` (87), `_03` (59) | Pirate1 to Pirate5 |
+| | `rebel_kit_01` (156), `_02` (20), `_03` (168) | Rebel1 to Rebel5 (a few Pirate packs) |
+| | `feral_warrior_kit_02` (26), `_03` (44) | Feral1 to Feral3 |
+
+So a voice set follows a pack family, and a family serves all models of its faction: Instincts' common
+mercenaries and kit 3 share the Merc packs, Evolution's three pirate kits the Pirate packs.
+
+### The events
+
+The packs' names say what each event is for (87 in a Merc pack, 84 in a Pirate pack, 23 in a Feral pack):
+
+| Kind | Merc and OPS packs | Pirate, Rebel and Feral packs (`MPACK_...`, with `_FORMATION`, `_LEADER` and alert level `_GREEN` to `_RED` variants) |
+|---|---|---|
+| alert, spotting | FIRST_HOSTILE_CONTACT, IDLE_TO_THREATENED(_GROUP), IDLE_TO_INTERESTED(_GROUP), PATROL_AWARE | FIRST_HOSTILE_CONTACT, SOMETHING_SEEN, IDLE_TO_INTERESTED, IDLE_TO_THREATENED, MERC_SAW_DOYLE |
+| search, lost, found again | ENEMY_TARGET_LOST, ENEMY_TARGET_REGAIN | ENEMY_TARGET_LOST, ENEMY_TARGET_REGAIN, FIND_BACK_TARGET |
+| calming down | THREATENED_TO_IDLE, INTERESTED_TO_IDLE, *_IDLE_RESPOND | INTERESTED_TO_IDLE |
+| answers, orders | ORDER_RECEIVED, *_RESPOND_GROUP, TEAM_LEADER_ORDER_*, TEAM_RADIO_*, SPECOPS_DIRECTIONNAL_* | SLOT_REPLACEMENT_*, SLOT_LOSS_*, THREATEN_..._FLANKLEFT/REAR/DEFEND, PLAY_DEFENSE, GIVE_SUPPORT_FIRE |
+| callouts | AI_CALLOUT_*, CALL_REINFORCEMENTS, PLAYER_STEALS_*, AGAINST_VEHICLES | AI_CALLOUT_CLOSE_COMBAT, MERC_VEHICLE_DANGER, PLAYER_STEALS_* |
+| attack, taunts | THREATEN, MACHINEGUN_ATTACK, UBER_TAUNTS | THREATEN, MACHINEGUN_ATTACK, SNIPER_THREATEN, MERC_NO_HIDING_PLACE, FERALJUMP |
+| grenades | GRENADE_SEEN, FIRE_IN_THE_HOLE | GRENADE_SEEN, GRENADE_EXPLOSION, FIRE_IN_THE_HOLE |
+| shot at, hurt | GETTING_SHOT_AT, FLASHBANG/GAS_GRENADE_EFFECT | BULLET_RAIN, RECEIVING_DAMAGE |
+| fear | ACT_AFRAID(_GROUP), SPECOPS_VS_ABERRATIONS | THREATEN_..._LO_HEALTH, DISORGANIZE_FORMATION, SLOT_LOSS_NOONE_NEAR |
+| death | AI_DIES, FERAL_DEATH, BURNING, CAUGHT_IN_TRAP | AI_DIES, AI_DIES_BURNING, FERAL_DEATH, CAUGHT_IN_TRAP |
+| friends, kills | FRIEND_DEATH, DEAD_BODY_FOUND, FRIENDLY_FIRE, AI_DOWN_CARVER, SATISFACTION_* | the same, MERC_KILLED_DOYLE |
+
+The workers' packs (Worker1-4) use four events of the Merc banks (`AI_DIES_WORKER` is AI_DIES). Some names
+point at events no bank has (the Merc packs' SPECOPS_* and UBER_*, FLASHBANG, GAS): they say nothing. A few
+events of each bank are played by no pack (`voices_merc1` 0x21c0062 to 0x21c006d, 1 to 37 s): scripted.
+
+The creatures' scripts name their events: `LightHurt`, `HeavyHurt`, `Death`, `IdleAndWalk_Start` and
+`Run_Start` (loops, stopped by `IdleAndWalk_Stop` and `Run_Stop`), and the packs SCREAM, BITE (Freak),
+INVESTIGATE, DIE_SCREAM, DIE_180_SCREAM (Sapper), ENRAGED, PUNCH_FORWARD/BACKWARD, HITGROUND, CHARGE, DEATH
+(Chucker); the sapper's `ExplosionEvent`. Their other events (footsteps, attacks) are played from the
+animations; not identified.
+
+### Replacing them
+
+The `.LS2` files lie outside the archives, so a mod puts new voices into the bank (`replace`, as with the
+weapons; `soundbank.py` names a dialogue bank `english/voices_merc1`, reads its streams from its language's
+folder, and a `cache` given to `replace` encodes a sound once for all five languages). A family's banks are
+loaded together (the XBE's Voices_Merc list; the levels load all five pirate or rebel banks, the tutorial
+Rebel 1, 3 and 5, level 22 Rebel 1 to 3), so the Halo voice mods (fci-modsrc `halo/voices/build.py`) fill
+only the first bank of a family and point the other packs at its events: each pack's soundEventID strings,
+rewritten in place (the same length: the script keeps its size and code). The new data is then held once,
+0.15 to 0.94 MB in one bank (the game's own largest is `voices_gen_crowe`, 838 KB, 28 sounds in the bank).
+
+Open: whether those banks fit the game's sound memory (64 MB Xbox, in every level); the level banks'
+scripted conversations; the creatures' animation sounds; what plays `fc15_char_feralwarrior`.

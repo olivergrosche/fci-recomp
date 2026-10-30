@@ -264,6 +264,59 @@ def test_a_bank_without_data_gets_its_part(sample):
     assert new.parts == [(0, 36)] and not new.audio(0).streamed
 
 
+def test_a_cache_encodes_each_sound_once_and_changes_nothing(sample, monkeypatch):
+    b, game = sample
+    bank = sb.Bank(b)
+    s = (RATE, [sine(640, 300)], None)
+    plain = sb.replace(bank, {1: s, 2: s})
+    calls = []
+    encode = sb.encode_for
+    monkeypatch.setattr(sb, "encode_for", lambda *args: calls.append(args) or encode(*args))
+    cache = {}
+    assert sb.replace(bank, {1: s, 2: (RATE, [list(s[1][0])], None)}, cache=cache) == plain
+    assert len(calls) == 1  # the same samples for two sounds
+    # another bank (a dialogue bank's other language) given the same cache: nothing encoded again
+    assert sb.replace(sb.Bank(b), {1: s}, cache=cache) == sb.replace(sb.Bank(b), {1: s})
+    assert len(calls) == 2  # the uncached call above
+    # what the encoding depends on is part of the key: a loop is encoded for itself
+    sb.replace(bank, {4: s}, cache=cache)
+    assert len(calls) == 3
+
+
+def test_dialogue_banks_are_named_by_language(sample, tmp_path):
+    b, game = sample
+    dat, fat = dat2.build({sb.bank_hash("english/voices_test"): b, sb.bank_hash("weapons_test"): b})
+    (game / "DVDsound.dat").write_bytes(dat)
+    (game / "DVDsound.fat").write_bytes(fat)
+    (game / "default.xbe").write_bytes(b"\0Voices_Test\0Weapons_Test\0")
+    names = sb.bank_names(game)
+    assert names[sb.bank_hash("english/voices_test")] == "english/voices_test"
+    assert names[sb.bank_hash("weapons_test")] == "weapons_test"
+    assert sb.bank_key("english/voices_test") == "\\sounds_dvd\\english\\voices_test.sb2"
+    assert sb.load("english/voices_test", game)[1] == "english/voices_test"
+    assert sb.language_of("french/voices_test") == "French" and sb.language_of("weapons_test") == "English"
+    assert sb.language_of("voices/x") == "English"  # not a language
+
+
+def test_cli_reads_a_dialogue_bank_with_its_language_streams(sample, tmp_path):
+    b, game = sample
+    # the same bank as a French dialogue bank streaming from sounds_xb/French/GameCommon.LS2
+    ls2 = b.replace(b"GameCommon.SS2", b"GameCommon.LS2")
+    dat, fat = dat2.build({sb.bank_hash("french/voices_test"): ls2})
+    (game / "DVDsound.dat").write_bytes(dat)
+    (game / "DVDsound.fat").write_bytes(fat)
+    (game / "sounds_xb" / "French").mkdir()
+    stream = (game / "sounds_xb" / "GameCommon.SS2").read_bytes()
+    (game / "sounds_xb" / "French" / "GameCommon.LS2").write_bytes(stream)
+    out = tmp_path / "wav"
+    r = run("export", "french/voices_test", out, "--game", game)
+    assert r.returncode == 0, r.stderr
+    assert (out / "7f0002.wav").is_file()
+    r = run("replace", "french/voices_test", tmp_path / "mod", f"7f0002={out / '7f0001.wav'}", "--game", game)
+    assert r.returncode == 0, r.stderr
+    assert (tmp_path / "mod" / "DVDsound" / "sounds_dvd" / "french" / "voices_test.sb2").is_file()
+
+
 def test_evolution_banks_read_the_same(sample):
     b, _ = sample
     evo = b"\x00\x00\x17\x00" + b[4:]

@@ -3,14 +3,17 @@ their place (re/notes/SOUNDS.md).
 
   python -B tools/soundbank.py banks --game <folder>
   python -B tools/soundbank.py list <bank> [--game <folder>]
-  python -B tools/soundbank.py export <bank> <folder> [--game <folder>] [--language English]
+  python -B tools/soundbank.py export <bank> <folder> [--game <folder>] [--language <language>]
   python -B tools/soundbank.py replace <bank> <out> [<sound>=<wav> | event:<event>=<wav> ...]
                                        [--from <folder>] [--game <folder>] [--keep-rate] [--match-level]
 
-  <bank>    a bank file (.sb2), or a bank's name (weapons_mp5) in the game's DVDsound.dat (needs --game)
+  <bank>    a bank file (.sb2), or a bank's name (weapons_mp5) in the game's DVDsound.dat (needs --game); a
+            dialogue bank, which comes once per language, as <language>/<name> (english/voices_merc1)
   --game    the game's files (its game/ folder): DVDsound.dat, lua.dat and default.xbe for the bank names,
             sounds_xb/ for the streamed sounds
-  <out>     the changed bank: a .sb2 file, or a mod folder, which gets it as DVDsound/sounds_dvd/<bank>.sb2
+  --language  the folder in sounds_xb of the dialogue streams (.LS2): a dialogue bank's own language, else
+            English
+  <out>    the changed bank: a .sb2 file, or a mod folder, which gets it as DVDsound/sounds_dvd/<bank>.sb2
   <sound>   a sound's (resource's) id in hex, as list prints it and export names its WAV (190025, 0x190025)
   <event>   an event's id as the scripts give it (FireSoundEvent = '1638408') or in hex (0x190008): every
             sound the event can play takes the WAV. Events and sounds count apart: event 0xad0001 may play
@@ -38,6 +41,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import dat2  # noqa: E402
 
 VERSIONS = (0x00150000, 0x00170000)  # Instincts, Evolution
+# the dialogue banks come once per language: \sounds_dvd\<language>\<bank>.sb2 (english/voices_merc1)
+LANGUAGES = ("english", "french", "german", "italian", "spanish")
 HEADER, EVENT, RESOURCE = 0x1C, 0x48, 0x58
 AUDIO, SWITCH, RANDOM, SILENCE = 1, 3, 4, 8
 TYPE_NAMES = {AUDIO: "audio", SWITCH: "switch", RANDOM: "random", SILENCE: "silence"}
@@ -516,10 +521,13 @@ def in_hardware_part(bank):
             yield i, a
 
 
-def replace(bank, sounds, keep_rate=False, match_level=False, game=None, language="English"):
+def replace(bank, sounds, keep_rate=False, match_level=False, game=None, language="English", cache=None):
     """the bank with {resource index: (rate, [samples of each channel], loop start or None)} in place of
-    those audio resources, each put into the bank's hardware part (a streamed one too, then mono)"""
+    those audio resources, each put into the bank's hardware part (a streamed one too, then mono).
+    cache: a dict that keeps the encoded sounds, so that a WAV given for many sounds, or for the sounds of
+    other banks given the same dict (a dialogue bank's languages), is encoded once"""
     new = {}
+    cache = {} if cache is None else cache
     for i, (rate, channels_samples, loop_start) in sounds.items():
         a = bank.audio(i)
         if a is None:
@@ -530,7 +538,11 @@ def replace(bank, sounds, keep_rate=False, match_level=False, game=None, languag
                 level = peak(decode(bank, i, game, language)[1]) / 32768
             except (ValueError, OSError):
                 level = None
-        new[i] = encode_for(a, rate, channels_samples, loop_start, keep_rate, level)
+        # everything encode_for's result depends on
+        key = (rate, tuple(map(tuple, channels_samples)), loop_start, keep_rate, level, a.rate, a.loop)
+        if key not in cache:
+            cache[key] = encode_for(a, rate, channels_samples, loop_start, keep_rate, level)
+        new[i] = cache[key]
     if not new:
         return bank.build()
     out = Bank(bank.build())
@@ -607,8 +619,12 @@ def candidate_names(game):
 
 
 def bank_names(game):
-    """{name hash: bank name} for the banks of the game's DVDsound named in its files"""
-    return {bank_hash(n): n.lower() for n in candidate_names(game) if "\\" not in n and "/" not in n}
+    """{name hash: bank name} for the banks of the game's DVDsound named in its files, a dialogue bank as
+    <language>/<name> (english/voices_merc1)"""
+    names = [n.lower() for n in candidate_names(game) if "\\" not in n and "/" not in n]
+    found = {bank_hash(f"{lang}/{n}"): f"{lang}/{n}" for n in names for lang in LANGUAGES}
+    found.update({bank_hash(n): n for n in names})
+    return found
 
 
 def load(bank, game=None):
@@ -623,6 +639,12 @@ def load(bank, game=None):
     if h not in files:
         raise SystemExit(f"error: DVDsound.dat has no bank {bank_key(bank)}")
     return Bank(files[h]), bank.lower().removesuffix(".sb2")
+
+
+def language_of(name):
+    """the sounds_xb folder of a bank's language streams: French for french/voices_merc1, else English"""
+    first = name.replace("\\", "/").split("/")[0].lower()
+    return first.capitalize() if "/" in name.replace("\\", "/") and first in LANGUAGES else "English"
 
 
 def parse_id(text):
@@ -709,7 +731,7 @@ def main():
     ap.add_argument("command", choices=("banks", "list", "export", "replace"))
     ap.add_argument("args", nargs="*")
     ap.add_argument("--game")
-    ap.add_argument("--language", default="English")
+    ap.add_argument("--language")
     ap.add_argument("--from", dest="source")
     ap.add_argument("--keep-rate", action="store_true")
     ap.add_argument("--match-level", action="store_true")
@@ -734,6 +756,8 @@ def main():
     if not a.args:
         raise SystemExit(f"error: {a.command} needs a bank")
     bank, name = load(a.args[0], a.game)
+    # the .LS2 streams of a dialogue bank lie in its language's folder (sounds_xb/French/...)
+    a.language = a.language or language_of(name)
     if a.command == "list":
         print(f"{name}: version {bank.version:#x}, group {bank.group()}, {len(bank.data)} bytes of sound data")
         print("\n".join(listing(bank)))
