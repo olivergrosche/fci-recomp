@@ -15,7 +15,7 @@ scripts\\default\\entities\\weapons\\p90.lua_compiled; a mod holds it as lua\\sc
 The config (paths relative to it): the "lua" part of a weapon mod's config, or the whole file.
 
   "lua": {
-    "game": "D:/FarCry Instincts/FarCryInstincts/game",
+    "game": "../FarCryInstincts/game",
     "out": "../../mods/instincts/halo-needler/lua",
     "set": {"FireParams[*].MuzzleLight.color": [1.0, 0.35, 0.85],      for every script below
             "FireParams[*].MuzzleParticle.bulletCases": null},
