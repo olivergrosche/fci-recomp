@@ -5,12 +5,20 @@
 /* default.xbe */
 #define RE_GAME_LOOK_COMPUTETURN 0x0003D450u  /* function, likely */
 #define RE_GAME_LOOK_UPDATE 0x0003DA20u  /* function, likely */
+#define RE_GAME_WSTRING_ASSIGN 0x00044FC0u  /* function, verified */
+#define RE_GAME_MAGMAAREA_FINDELEMENT 0x000665A0u  /* function, likely */
+#define RE_GAME_STRINGTABLE_LOOKUP 0x00072570u  /* function, verified */
 #define RE_GAME_PLAYER_PROCESSINPUT 0x00098AE0u  /* function, verified */
 #define RE_GAME_PLAYER_APPLYTURN 0x0009C610u  /* function, likely */
 #define RE_GAME_GAMEVIEW_HANDLEACTION 0x000EDB70u  /* function, likely */
 #define RE_GAME_CAMERA_COPY 0x000EDF20u  /* function, likely */
 #define RE_GAME_CAMERA_BUILDVIEWS 0x000F0500u  /* function, likely */
 #define RE_GAME_GAMEVIEW_ONACTION 0x000F67D0u  /* function, likely */
+#define RE_GAME_MENUPAGE_LOCALIZEAREA 0x00109170u  /* function, likely */
+#define RE_GAME_MAINMENUPAGE_CONSTRUCT 0x0014DA50u  /* function, likely */
+#define RE_GAME_MAINMENUPAGE_HIDECHEATSDEBUG 0x0014E6F0u  /* function, verified */
+#define RE_GAME_MAINMENUPAGE_ONFOCUS 0x0014EE40u  /* function, verified */
+#define RE_GAME_MAINMENUPAGE_ONPRESS 0x0014EFF0u  /* function, verified */
 #define RE_GAME_INPUT_POLLPADS 0x001F6C00u  /* function, likely */
 #define RE_GAME_INPUT_PROCESSSTICK 0x001F7480u  /* function, likely */
 #define RE_GAME_CONTROLS_UPDATE 0x001F7E10u  /* function, likely */
@@ -22,12 +30,14 @@
 #define RE_GAME_CONSOLE_REGISTERINT 0x001FDED0u  /* function, likely */
 #define RE_GAME_MOVIE_PLAY 0x00220200u  /* function, verified */
 #define RE_GAME_VIDEO_SETUP 0x00241880u  /* function, likely */
+#define RE_GAME_NAME_CRC32 0x003529B0u  /* function, verified */
 #define RE_GAME_ENGINE3D_REGISTERCVARS 0x00481B30u  /* function, likely */
 #define RE_GAME_SPRINTF 0x004EAAFBu  /* function, likely */
 #define RE_GAME_XGETVIDEOFLAGS 0x004F8019u  /* function, verified */
 #define RE_GAME_XGETVIDEOSTANDARD 0x004F8062u  /* function, likely */
 #define RE_GAME_XGETAVPACK 0x004F8167u  /* function, likely */
 #define RE_GAME_VTBL_GAMEVIEW 0x00604BD8u  /* vtable, likely */
+#define RE_GAME_MAINMENUPAGE_VTABLE 0x00609150u  /* vtable, likely */
 #define RE_GAME_G_PCONSOLE 0x006B38D8u  /* global, likely */
 #define RE_GAME_G_PINPUTMANAGER 0x006B38E4u  /* global, likely */
 #define RE_GAME_GAMEVIEW_LOOKCONTROL 0x024u  /* pointer */

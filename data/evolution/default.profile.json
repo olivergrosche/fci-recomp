@@ -65,6 +65,18 @@
       "Player_ProcessInput(block), as Instincts' 00098AE0 (the same reads: angles +0x18, turnYaw +0xBC, turnPitch +0xC0; vtable 004B04E8 slot +0xD4): direct mouse aim (fci_aim.c)",
       "00098AE0"
     ],
+    "sub_000FAA54": [
+      "gate",
+      "the main menu page's start hides P_Main's button B_CheatsDebug (eax = page, its +0x4C the areas; ret, eax = 1), as Instincts' 0014E6F0: first shows B_SpecialFeatures again, which the constructor hid (000FA51E), as the MODS entry (fci_mainmenu.c, re/notes/MENUS.md)"
+    ],
+    "sub_000577C3": [
+      "gate",
+      "the string tables' lookup (stdcall: language, the wide string it builds, section, entry, file; ret 0x14), Instincts' 00072570 in another convention: MODS and its help line for B_SpecialFeatures (fci_mainmenu.c, re/notes/MENUS.md)"
+    ],
+    "sub_000FB0A2": [
+      "gate",
+      "the main menu page's press handler (thiscall; the event's +4 is the element; returns al = 0, ret 4; vtable 004BEC78 slot 2), as Instincts' 0014EFF0: B_SpecialFeatures opens the mod menu instead of the Special Features area (fci_mainmenu.c, re/notes/MENUS.md)"
+    ],
     "sub_0012C35F": [
       "prehook",
       "a vehicle drive (eax = vehicle), from the movement handler 0012C298: RECOMP_FCI_VEHTRACE (fci_vehdiag.c)"

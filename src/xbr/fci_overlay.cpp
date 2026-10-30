@@ -1,8 +1,8 @@
 // FCI: the mod menu, a Dear ImGui overlay over the game (src/fci_mods.c holds the mods). F1 or Insert (fci.ini
-// mods-menu-key) or a controller's both sticks pressed together open and close it; while it is open the game
-// gets no input (a neutral pad, no keys, no mouse) and the menu takes the keyboard, the mouse and the
-// controller. A choice is saved at once and takes effect when the game next opens its archives (a level
-// change, the main menu: a new instance).
+// mods-menu-key) or a controller's both sticks pressed together open and close it, and the main menu's MODS
+// entry opens it (src/fci_mainmenu.c); while it is open the game gets no input (a neutral pad, no keys, no
+// mouse) and the menu takes the keyboard, the mouse and the controller. A choice is saved at once and takes
+// effect when the game next opens its archives (a level change, the main menu: a new instance).
 #include <windows.h>
 
 #include <algorithm>
@@ -43,10 +43,14 @@ std::atomic<bool> g_open{false};
 std::atomic<int> g_focus{
         0};   // frames left in which the first mod asks for the focus (a window's first drops it)
 std::atomic<bool> g_hold{false};   // the game sees a neutral pad until every button is let go
+// the menu follows the controller once its buttons are let go after opening: the A that chose the main
+// menu's MODS entry is still down then and would switch the first mod
+std::atomic<bool> g_steer_wait{false};
 HWND g_hwnd = nullptr;
 bool g_ready = false;
-std::vector<int> g_keys;   // virtual keys
-std::string g_key_names;   // for the menu's hint: "F1 or INSERT"
+std::vector<int> g_keys;                     // virtual keys
+std::vector<std::string> g_key_names_each;   // the same keys' names, for the log
+std::string g_key_names;                     // for the menu's hint: "F1 or INSERT"
 
 void ReadKeys()
 {
@@ -61,6 +65,7 @@ void ReadKeys()
         int vk = name.empty() ? -1 : fci_input_key_code(name.c_str());
         if (vk > 0) {
             g_keys.push_back(vk);
+            g_key_names_each.push_back("key " + name);
             g_key_names += (g_key_names.empty() ? "" : " or ") + name;
         }
         if (end == std::string::npos)
@@ -75,6 +80,7 @@ void SetOpen(bool on, const char* by)
         return;
     std::fprintf(stderr, "[FCI] mod menu %s (%s)\n", on ? "opened" : "closed", by);
     g_hold = true;
+    g_steer_wait = on;
     g_focus = on ? 3 : 0;
     fci_input_release_all();
     if (g_ready) {
@@ -250,10 +256,13 @@ bool fci_overlay_message(HWND w, UINT msg, WPARAM wp, LPARAM lp, LRESULT* result
     // a menu key toggles once per press: its own down state, not the message's repeat bit, which a
     // remote desktop's injected keys need not carry
     static int held = 0;
-    bool menu_key = std::find(g_keys.begin(), g_keys.end(), int(wp)) != g_keys.end();
-    if (menu_key && (msg == WM_KEYDOWN || msg == WM_KEYUP)) {
-        if (msg == WM_KEYDOWN && held != int(wp))
-            SetOpen(!g_open, "key");
+    auto key = std::find(g_keys.begin(), g_keys.end(), int(wp));
+    if (key != g_keys.end() && (msg == WM_KEYDOWN || msg == WM_KEYUP)) {
+        if (msg == WM_KEYDOWN && held != int(wp)) {
+            // the name, and whether Windows saw the key down already (a remote desktop's repeats)
+            std::string by = g_key_names_each[key - g_keys.begin()] + (lp & (1 << 30) ? ", repeat" : "");
+            SetOpen(!g_open, by.c_str());
+        }
         held = msg == WM_KEYDOWN ? int(wp) : 0;
         *result = 0;
         return true;
@@ -302,6 +311,15 @@ bool fci_overlay_message(HWND w, UINT msg, WPARAM wp, LPARAM lp, LRESULT* result
 }
 
 extern "C" int fci_overlay_open(void) { return g_open; }
+
+// the main menu's MODS entry was chosen (src/fci_mainmenu.c, from the game's thread)
+extern "C" void fci_overlay_open_from_menu(void)
+{
+    if (g_ready)
+        SetOpen(true, "the main menu's MODS");
+    else
+        std::fprintf(stderr, "[FCI] mod menu: MODS chosen, but the menu has no window\n");
+}
 
 namespace {
 // the pad report as the menu's controller: what the game would have got (a real pad, the keyboard and mouse
@@ -361,8 +379,10 @@ extern "C" void fci_overlay_pad(int pad, uint8_t* report)
     if (g_open && b && !b_down[pad])
         SetOpen(false, "B");
     b_down[pad] = b;
+    if (pad == 0 && g_steer_wait && !Pressed(report))
+        g_steer_wait = false;
     if (pad == 0 && (g_open || steering)) {
-        PadToMenu(report, g_open && !both);
+        PadToMenu(report, g_open && !both && !g_steer_wait);
         steering = g_open;
     }
     if (!g_open && g_hold && !Pressed(report))

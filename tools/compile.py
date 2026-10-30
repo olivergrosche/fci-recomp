@@ -134,6 +134,21 @@ REPLACE = {
         "default with RECOMP_CVAR_<name> (fci_cvars.c)",
     ),
     "sub_001FDED0": ("prehook", "Console_RegisterInt (re/symbols): as Console_RegisterFloat"),
+    "sub_0014E6F0": (
+        "gate",
+        "the main menu page's start hides P_Main's button B_CheatsDebug (eax = page; ret, eax = 1): kept as "
+        "the MODS entry (fci_mainmenu.c, re/notes/MENUS.md)",
+    ),
+    "sub_00072570": (
+        "gate",
+        "the string tables' lookup (ecx = file, edx = language, esi = the wide string it builds; section, "
+        "entry; ret 8): MODS and its help line for B_CheatsDebug (fci_mainmenu.c, re/notes/MENUS.md)",
+    ),
+    "sub_0014EFF0": (
+        "prehook",
+        "the main menu page's press handler (thiscall; the event's +4 is the element): B_CheatsDebug opens "
+        "the mod menu (fci_mainmenu.c, re/notes/MENUS.md)",
+    ),
     "sub_0021FFA0": (
         "gate",
         "a menu background video's update (eax = video, ret 4): skipped until its next frame is due by the "
