@@ -153,8 +153,94 @@ pelvis, thighs, calves, Spine1, Spine2, head, upper arms and forearms.
 - Give both LOD parts a mesh (LOD 1 may be the same). Keep or replace the armour and MPLOGO parts.
 - No hats on an Elite: change the entities' hat files or replace the hat models.
 
+## Importing a character (tools/character_import.py)
+
+Started 2026-10-30 with Halo CE's bipeds (glTF exports of the user's maps: skinned, joints = Halo nodes in
+their bind pose, Halo units, Y up through a root node, facing +Z; `"axes": ["x", "-z", "y"]` and
+`"scale": 3.048` give the game's axes in metres). A config names the source, the template model, the fit and
+the texture options; the tool reads the templates out of the game's level archives (read only), writes the
+rebuilt model, its two textures and the hidden hats into a mod folder for each level archive that holds the
+model (a pattern such as `levels/[0-9]*` leaves out the multiplayer maps, which carry the merc models
+unused), and a `mod.ini`.
+
+**Mapping.** Halo CE's bipeds are Character Studio rigs too, and their local axes follow the same
+conventions as the games' Biped (x along the bone, z the hinge of knees and elbows, the pelvis x up and z
+left; checked joint by joint on the elite: same directions within a few degrees once posed alike). Joints
+map by name (case, spaces and underscores aside); a joint without a bone moves with its nearest mapped
+ancestor and gives it its weights. For the elite (the Flood combat forms have the same body names):
+
+| Halo joint | Bone | Fit |
+|---|---|---|
+| bip01 pelvis | Bip01_Pelvis | frame |
+| bip01 spine | Bip01_Spine | aligned to spine1, length x 0.96 |
+| bip01 spine1 | Bip01_Spine1, Bip01_Spine2 | aligned to neck, x 0.91; weights shared with Spine2 along the length |
+| bip01 neck, neck1 | Bip01_Neck | aligned to head, x 0.54 (the elite's long forward neck stands up, 9 cm) |
+| bip01 head, frame mandible (4) | Bip01_Head | keep (the face looks ahead), size 0.85, 7 cm up and 2 cm back |
+| bip01 l/r clavicle | Bip01_L/R Clavicle | aligned, x 0.54 (no vertex of the elite uses them) |
+| bip01 l/r upperarm | Bip01_L/R UpperArm | aligned, x 0.56, turned 52 degrees (arms down -> T-pose), size 0.7 |
+| bip01 l/r forearm | Bip01_L/R Forearm, Forearm RollBone | aligned, x 0.60, the far part on the roll bone |
+| bip01 l/r hand | Bip01_L/R Hand | frame, size 0.75 (no finger bones: the hands stay rigid) |
+| bip01 l/r thigh | Bip01_L/R Thigh | aligned, x 0.69, turned 41 degrees |
+| bip01 l/r calf, horselink | Bip01_L/R Calf | aligned to the foot, x 0.56: the backward horselink bend stays in the shin |
+| bip01 l/r foot | Bip01_L/R Foot | frame, size 0.7, grounded (+0.13 m: the hoof stands on the floor) |
+| Flood: frame antenna (9), spike (9), bip01 ponytail1 | with spine1, l forearm, head | |
+
+Toes, the upper arm roll bones, jaw and face bones and the fingers get no weights.
+
+**Conforming.** Each mapped joint gets a map from the source's bind pose into the template's: an aligned
+joint (its mapped child lies along its x axis, on a descendant of its bone) turns its joint-to-child
+direction onto its bone-to-child-bone direction with the hinge axes matched, stretches by the length ratio
+between the two joints only (what hangs past either end, such as the Flood's tentacle spikes, keeps its
+size) and scales across by the thickness; a frame joint carries its local frame onto the bone's, a keep joint
+keeps the source's orientation; both scale evenly. Each joint lands on its bone (plus an offset), its child
+on the child's bone, so neighbouring maps agree at the joints. A vertex is the weighted blend of its joints'
+maps (linear blend, as a pose moves it); its normal follows the blended map's inverse transpose; tangent
+and binormal are recomputed from the atlas coordinates. Grounded bones move up until their lowest vertex
+stands on the template's floor, their aligned parent stretching to meet them. Weights go to the joints'
+bones (shared along the length where template bones lie between), the two largest are kept, renormalised.
+Elite at thickness 0.8: legs keep the human hip height (0.955 m), the torso the elite's length, the crest
+ends 1.94 m up (spec-ops elite 2.03 m; pirate_kit_01 1.83 m).
+
+**Textures.** The glTF materials (transparent ones left out: the elite's inset lights, the Flood's fronds)
+go into one atlas at their own resolution (elite 1024 x 512, Flood 512 x 512, DXT5, all mip levels): base
+colour plus emission, gain 1.6 (elites) / 1.15 (Flood) with a soft roll-off, a dark matte in the
+alpha-tested holes (elite teeth and head), gloss 126 to 155 as alpha (the pirates' own range). It replaces the
+diffuse texture of one 28-byte material the template alone uses, a flat 64 x 64 normal map its bump
+texture; the whole mesh is that one material. Both LOD parts get the full mesh (1644 triangles for the
+elite); body armour parts get one triangle of no area; hats are replaced by models whose triangles have no
+area.
+
+**Results (built 2026-10-30, not yet in the game).** Software renders in the bind pose and three poses
+driven by the template's bones (knees and elbows bent, arms down with a stride, head turned with a crouch
+and twisted hands) match the originals' poses without tears; front faces agree with the normals on 1613 of
+1644 elite triangles and 2032 of 2050 Flood ones (the exports' own folds, the two-sided teeth); weights equal
+the source's per vertex.
+
+| Mod (fci-modsrc `mods\<game>\`) | Template, material (texture replaced) | Source | Archives |
+|---|---|---|---|
+| evolution `halo-elite-pirates` | pirate_kit_01, 0 (`id01a`) | elite minor (blue) | 21, 22, 23, 24, 26 |
+| | pirate_kit_02, 0 (`id01b`) | elite major (red) | 21, 22, 23, 24, 26 |
+| | pirate_kit_03, 0 (`id01c`); scale doubled to 2/32767 | elite minor | 21, 22, 23, 24 |
+| | `hats\beret01` hidden (in 21 to 26 only pirates wear it) | | |
+| instincts `halo-elite-mercs` | merc_prtoto01, 1 (`pants`); merc_kit_03, 1 (`pants`) | elite minor | 00 to 07, 10, 11, 13 |
+| | merc_kit_04, 2 (`skin`) | elite major | the same |
+| | uber_kit_01, 0 (`uber_kit_01_df`, shared with mp_uber) | elite special | 13 |
+| | BODY_ARMOR parts and `hats\beret01`, `fatiguecap01`, `rangerhat01` hidden (only mercs wear them) | | |
+| instincts `halo-flood-trigens` | freak_sapper_kit_01, 1 (`freak_sapper_df`) | Flood combat human | 07, 10, 11, 13 |
+
+The Instincts models and the Trigen hold +-1 m around the pelvis at 1/32767 and get 2/32767 (the Elite's
+crest is higher); kit_01 and _02 keep their 0.002. The Chucker (2.9 m, hunched, one huge arm) does not take
+the Flood combat elite: squeezed onto its skeleton the Flood becomes a stretched stick with a sunken head;
+it needs its own fit or another source.
+
 ## Open
 
+- In the game: the position scale doubled (2/32767), textures larger than the originals (1024 x 512 for a
+  256 x 256), the hidden parts and hats, how far the Elite's crest and shoulder pads clip in the mercs'
+  poses and where the weapons sit in its hands (Prop nodes, not the hand bone).
+- Hit capsules and ragdoll stay human: the crest above the head capsule cannot be hit.
+- The elite's neck is squashed to the Biped's 9 cm; a longer neck needs the template's Head bone moved
+  (bone position and the skin matrices below it), which only works if the animations never set it.
 - The physics objects' layout (capsule sizes and frames), needed if a model outgrows human proportions.
 - What the colour of 32-byte vertices selects (shader 4507): almost always exactly one of r, g, b, a at
   255.
