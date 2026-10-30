@@ -154,6 +154,86 @@ def test_tints_change_only_the_named_librarys_reddish_colours():
     assert close(g, br.tint((0.258824, 0, 0), GREEN), 1e-5) and g[1] > g[0] > g[2]
 
 
+BLOODLIB = (
+    b'<?xml version="1.0" encoding="ISO-8859-1" ?>\r\n<ParticleLibrary>\r\n'
+    b'    <Particles Name="GFX_Particle_Bullet_Hit_Blood_Big.GFX_Particle_Bullet_Hit_Blood_Big_A">\r\n'
+    b'        <Params Active="1" Count="5" LifeTime="0.5" Size="0.1" SizeSpeed="0.12" Speed="40" '
+    b'Texture="\\Magma\\Textures\\Hud\\damage_21.XBT" />\r\n'
+    b'        <Params Active="0" Count="0" LifeTime="1" Size="1" SizeSpeed="0" Speed="2" Texture="" />\r\n'
+    b"        <Childs>\r\n"
+    b'            <Particles Name="GFX_Particle_Bullet_Hit_Blood_Big_C">\r\n'
+    b'                <Params Active="1" Count="1" LifeTime="0.35" Size="0" SizeSpeed="0.05" Speed="0.5" '
+    b'Texture="\\Magma\\Textures\\Hud\\damage_21.XBT" />\r\n'
+    b"            </Particles>\r\n"
+    b'            <Particles Name="GFX_Particle_Bullet_Hit_Blood_Big_Sprite">\r\n'
+    b'                <Params Active="1" Count="1" LifeTime="0.1" Size="100" SizeSpeed="0.1" Speed="20" '
+    b'Texture="Textures_xbox\\Sprites\\GFX_Sparks_A.xbt" />\r\n'
+    b"            </Particles>\r\n"
+    b"        </Childs>\r\n"
+    b"    </Particles>\r\n"
+    b'    <Particles Name="GFX_Particle_Bullet_Hit_Concrete.GFX_Particle_Bullet_Hit_Concrete_A">\r\n'
+    b'        <Params Active="1" Count="2" LifeTime="1" Size="0.25" SizeSpeed="0.75" Speed="4" '
+    b'Texture="\\Magma\\Textures\\Hud\\damage_21.XBT" />\r\n'
+    b"    </Particles>\r\n</ParticleLibrary>\r\n"
+)
+SPRAYED = {
+    "libraries": ["GFX_Particle_Bullet_Hit_Blood_Big"],
+    "texture": "damage_21",
+    "size": 2.5,
+    "count": 2,
+    "speed": 1.3,
+    "life": 1.4,
+}
+
+
+def test_spray_scales_the_blood_emitters_only():
+    out, changes = br.edit_particles(BLOODLIB, spray=SPRAYED)
+    a, b = BLOODLIB.split(b"\r\n"), out.split(b"\r\n")
+    assert len(a) == len(b)
+    assert [i for i, (x, y) in enumerate(zip(a, b)) if x != y] == [3, 7]  # A's and C's emitters
+    assert b'Count="10" LifeTime="0.7" Size="0.25" SizeSpeed="0.3" Speed="52"' in b[3]
+    assert b'Count="2" LifeTime="0.49" Size="0" SizeSpeed="0.125" Speed="0.65"' in b[7]
+    assert len(changes) == 10
+    # the sparks (another texture), the inactive emitter and other libraries stay
+    assert b[4] == a[4] and b[10] == a[10] and b[15] == a[15]
+
+
+def test_spray_and_tints_in_one_pass():
+    xml = LIBRARY.replace(
+        b"</ParticleLibrary>",
+        BLOODLIB.split(b"<ParticleLibrary>\r\n")[1].split(b"</ParticleLibrary>")[0] + b"</ParticleLibrary>",
+    )
+    out, changes = br.edit_particles(xml, {"GFX_Explosions_Sapper": GREEN}, SPRAYED)
+    assert len(changes) == 4 + 10
+    assert out == br.edit_particles(br.recolour_tints(xml, {"GFX_Explosions_Sapper"}, GREEN)[0], spray=SPRAYED)[0]
+
+
+def materials(decals):
+    out = bytearray(b"FTAM" + struct.pack("<II", 1, len(decals)))
+    for i, d in enumerate(decals):
+        e = bytearray(br.ENTRY)
+        struct.pack_into("<iii", e, 0, i, 0, 0)
+        struct.pack_into("<if", e, 0xC, d, 0.025)
+        struct.pack_into("<f", e, 0x60, 0.125)
+        out += e
+    return bytes(out)
+
+
+def test_stains_resize_the_flesh_decal_of_the_named_materials():
+    b = materials([1, 6, 6, 7])
+    out = br.resize_stains(b, [1, 2], 0.4, 0.1)
+    assert len(out) == len(b)
+    for i, size, var in ((0, 0.025, 0.125), (1, 0.4, 0.1), (2, 0.4, 0.1), (3, 0.025, 0.125)):
+        at = 12 + i * br.ENTRY
+        assert struct.unpack_from("<f", out, at + 0x10)[0] == pytest.approx(size)
+        assert struct.unpack_from("<f", out, at + 0x60)[0] == pytest.approx(var)
+    assert out[:12] == b[:12]
+    with pytest.raises(SystemExit, match="flesh decal"):
+        br.resize_stains(b, [3], 0.4, 0.1)
+    with pytest.raises(SystemExit, match="material list"):
+        br.resize_stains(b[:-1], [1], 0.4, 0.1)
+
+
 def level_archive(game, level, files):
     folder = game / "levels" / level
     folder.mkdir(parents=True, exist_ok=True)
@@ -165,18 +245,31 @@ def level_archive(game, level, files):
 SPRAY = "magma/textures/hud/damage_21.xbt"
 DECAL = "textures_xbox/decal/gfx_decal_bullet_hit_flesh_a.xbt"
 SPLAT = "textures_xbox/decal/gfx_decal_explosion_bloodsplat_df.xbt"
+MATS = "particles/materials.dat"
 
 
-def setup(tmp_path, mods):
+def setup(tmp_path, mods, **top):
     game = tmp_path / "game"
-    level_archive(game, "01_Beach", {SPRAY: texture(br.DXT3, 8, 8, 1), DECAL: texture(br.DXT5, 8, 8, 2)})
+    marsh = LIBRARY.replace(b"</ParticleLibrary>", BLOODLIB.split(b"<ParticleLibrary>\r\n")[1])
+    level_archive(
+        game,
+        "01_Beach",
+        {
+            SPRAY: texture(br.DXT3, 8, 8, 1),
+            DECAL: texture(br.DXT5, 8, 8, 2),
+            MATS: materials([6, 6]),
+            "levels/01_Beach/01_Beach_DepLoadParticles.xml": BLOODLIB,
+        },
+    )
     level_archive(
         game,
         "10_Marsh",
         {
             SPRAY: texture(br.DXT3, 8, 8, 1),
-            SPLAT: texture(br.DXT5, 8, 8, 2),
-            "levels/10_Marsh/10_Marsh_DepLoadParticles.xml": LIBRARY,
+            DECAL: texture(br.DXT5, 8, 8, 2),
+            SPLAT: texture(br.DXT5, 16, 16, 3),
+            MATS: materials([6, 6]),
+            "levels/10_Marsh/10_Marsh_DepLoadParticles.xml": marsh,
         },
     )
     level_archive(game, "M01_Multi", {SPRAY: texture(br.DXT3, 8, 8, 1)})
@@ -187,6 +280,7 @@ def setup(tmp_path, mods):
         "group": "Halo: effects",
         "colours": {"elite": {"from": RED, "to": [92, 78, 240]}, "flood": {"from": RED, "to": [186, 204, 104]}},
         "textures": [SPRAY, DECAL],
+        **top,
         "mods": mods,
     }
     path = tmp_path / "blood.json"
@@ -194,58 +288,99 @@ def setup(tmp_path, mods):
     return path
 
 
-def test_build_writes_alternatives_and_a_separate_mod(tmp_path, capsys):
+STAINS = {
+    "materials": [0, 1],
+    "size": 0.4,
+    "variance": 0.1,
+    "texture": DECAL,
+    "splat": {"game": "game", "archive": "levels/10_Marsh/10_marsh", "path": SPLAT},
+}
+
+
+def test_build_writes_alternatives_and_a_separate_set(tmp_path, capsys):
     path = setup(
         tmp_path,
         {
             "halo-blood-elite": {"colour": "elite", "name": "Elite"},
             "halo-blood-flood": {"colour": "flood", "name": "Flood", "levels": {"levels/10_*": "elite"}},
+            "halo-blood-red": {"colour": None, "tints": None},
             "halo-blood-sappers": {
+                "set": "sapper",
                 "colour": "flood",
                 "archives": ["levels/10_*"],
                 "textures": [SPLAT],
-                "particles": ["GFX_Explosions_Sapper"],
+                "spray": None,
+                "stains": None,
+                "tints": None,
             },
         },
+        spray=SPRAYED,
+        stains=STAINS,
+        tints={"GFX_Explosions_Sapper": "flood"},
     )
     planned = br.build(path, check=tmp_path / "check")
     mods = tmp_path / "mods"
+    beach, marsh = "levels/01_Beach/01_beach/", "levels/10_Marsh/10_marsh/"
+    beach_lib, marsh_lib = (
+        "levels/01_Beach/01_Beach_DepLoadParticles.xml",
+        "levels/10_Marsh/10_Marsh_DepLoadParticles.xml",
+    )
     elite = mods / "halo-blood-elite"
-    assert sorted((elite / ".files").read_text().split()) == sorted(
-        [
-            "levels/01_Beach/01_beach/" + DECAL,
-            "levels/01_Beach/01_beach/" + SPRAY,
-            "levels/10_Marsh/10_marsh/" + SPRAY,
-        ]
-    )  # not the multiplayer map
+    files = set((elite / ".files").read_text().split())
+    assert files == {a + f for a in (beach, marsh) for f in (SPRAY, DECAL, MATS)} | {
+        beach + beach_lib,
+        marsh + marsh_lib,
+    }  # not the multiplayer map
     assert "group = Halo: effects" in (elite / "mod.ini").read_text()
+    splat = texture(br.DXT5, 16, 16, 3)
+    # the hit decal is the splat, recoloured; the materials are resized; sprays scaled; the sapper tinted flood
+    assert (elite / beach / DECAL).read_bytes() == br.recolour_xbt(splat, BLUE)
+    assert (elite / beach / MATS).read_bytes() == br.resize_stains(materials([6, 6]), [0, 1], 0.4, 0.1)
+    assert (elite / beach / beach_lib).read_bytes() == br.edit_particles(BLOODLIB, spray=SPRAYED)[0]
+    marsh_xml = (elite / marsh / marsh_lib).read_bytes()
+    marsh_src = LIBRARY.replace(b"</ParticleLibrary>", BLOODLIB.split(b"<ParticleLibrary>\r\n")[1])
+    assert marsh_xml == br.edit_particles(marsh_src, {"GFX_Explosions_Sapper": GREEN}, SPRAYED)[0]
     flood = mods / "halo-blood-flood"
     spray = lambda mod, level: (mod / level / SPRAY).read_bytes()
     # per-archive colour: the Marsh's spray is the elite's in the flood mod too
-    assert spray(flood, "levels/10_Marsh/10_marsh") == spray(elite, "levels/10_Marsh/10_marsh")
-    assert spray(flood, "levels/01_Beach/01_beach") != spray(elite, "levels/01_Beach/01_beach")
+    assert spray(flood, marsh) == spray(elite, marsh)
+    assert spray(flood, beach) != spray(elite, beach)
+    # red: nothing recoloured, the splat as it is, no tints
+    red = mods / "halo-blood-red"
+    assert not (red / beach / SPRAY).exists()
+    assert (red / beach / DECAL).read_bytes() == splat
+    assert (red / marsh / marsh_lib).read_bytes() == br.edit_particles(marsh_src, spray=SPRAYED)[0]
     sappers = mods / "halo-blood-sappers"
-    xml = sappers / "levels/10_Marsh/10_marsh/levels/10_Marsh/10_Marsh_DepLoadParticles.xml"
-    assert xml.read_bytes() == br.recolour_tints(LIBRARY, {"GFX_Explosions_Sapper"}, GREEN)[0]
-    assert len(planned["halo-blood-sappers"]) == 2
-    assert "4 particle tints" in capsys.readouterr().out
+    assert set((sappers / ".files").read_text().split()) == {marsh + SPLAT}
+    assert len(planned["halo-blood-sappers"]) == 1
+    out = capsys.readouterr().out
+    assert "halo-blood-elite: 8 files in 2 archives" in out and "2 StartColor" in out and "2 stains" in out
     assert (tmp_path / "check" / "blood-mods.png").exists()
 
-    # a rebuild without the decal takes it out of the folders
+    # a rebuild without the decal's splat takes the splat out
     cfg = json.loads(path.read_text())
+    cfg["stains"] = None
     cfg["textures"] = [SPRAY]
     path.write_text(json.dumps(cfg))
     br.build(path, ["halo-blood-elite"])
-    assert not (elite / "levels/01_Beach/01_beach" / DECAL).exists()
-    assert (elite / "levels/01_Beach/01_beach" / SPRAY).exists()
+    assert not (elite / beach / DECAL).exists() and not (elite / beach / MATS).exists()
+    assert (elite / beach / SPRAY).exists()
 
 
-def test_mods_that_share_some_files_are_refused(tmp_path):
+def test_mods_of_other_sets_that_share_files_are_refused(tmp_path):
     path = setup(
         tmp_path,
         {
             "halo-blood-elite": {"colour": "elite"},
-            "halo-blood-spray": {"colour": "flood", "textures": [SPRAY]},
+            "halo-blood-spray": {"colour": "flood", "textures": [SPRAY]},  # same set: an alternative
+        },
+    )
+    br.build(path, dry_run=True)
+    path = setup(
+        tmp_path,
+        {
+            "halo-blood-elite": {"colour": "elite"},
+            "halo-blood-other": {"set": "other", "colour": "flood", "textures": [SPRAY]},
         },
     )
     with pytest.raises(SystemExit, match="not alternatives"):
@@ -255,5 +390,7 @@ def test_mods_that_share_some_files_are_refused(tmp_path):
 def test_unknown_colour_and_empty_mod_are_refused(tmp_path):
     with pytest.raises(SystemExit, match="no colour"):
         br.build(setup(tmp_path, {"m": {"colour": "grunt"}}), dry_run=True)
+    with pytest.raises(SystemExit, match="no colour"):
+        br.build(setup(tmp_path, {"m": {"colour": "elite", "tints": {"X": "grunt"}}}), dry_run=True)
     with pytest.raises(SystemExit, match="writes nothing"):
         br.build(setup(tmp_path, {"m": {"colour": "elite", "textures": ["no/such.xbt"]}}), dry_run=True)
