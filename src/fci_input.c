@@ -123,6 +123,19 @@ static int parse_input(const char *s)
     return -1;
 }
 
+/* a key named as in the bindings (F1, INSERT, ...): its virtual key, -1 for none or a mouse input */
+int fci_input_key_code(const char *name)
+{
+    char up[32];
+    size_t i;
+    int code;
+    for (i = 0; name[i] && i + 1 < sizeof up; i++)
+        up[i] = (char)toupper((unsigned char)name[i]);
+    up[i] = 0;
+    code = parse_input(up);
+    return code < 256 ? code : -1;
+}
+
 #define MAX_BINDS 4
 static int binds[C_COUNT][MAX_BINDS];
 static struct {
@@ -433,6 +446,14 @@ static int control(int c)
         if (binds[c][k] >= 0 && held(binds[c][k]))
             return 1;
     return 0;
+}
+
+/* a key or mouse button bound to a stick click is held: the mod menu's both-sticks chord is a controller's
+ * (fci_overlay.cpp), as the keyboard's crouch and zoom are held together in play */
+int fci_input_stick_click_held(void)
+{
+    config();
+    return control(C_LS) || control(C_RS);
 }
 
 static int16_t to_axis(double v)

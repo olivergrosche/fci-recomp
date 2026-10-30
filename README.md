@@ -113,11 +113,12 @@ description = What it changes.
 credit = Who made what, under which license.
 ```
 
-In the game, F1 or both sticks pressed together open the mod menu, which switches mods on and off (two mods
-that replace the same file are one or the other). The game keeps running underneath, without input, so
-pause it first. A choice takes effect when the game next opens its archives: at a level change or after
-Quit to Main Menu. The game folder itself is never changed: the archives the switched-on mods touch are
-merged into `mods\.cache` and read from there. The choice is kept in `mods\enabled.txt`.
+In the game, F1 or Insert (`mods-menu-key` in `fci.ini`) or both sticks of a controller pressed
+together open the mod menu, which switches mods on and off (two mods that replace the same file are one
+or the other). The game keeps running underneath, without input, so pause it first. A choice takes
+effect when the game next opens its archives: at a level change or after Quit to Main Menu. The game
+folder itself is never changed: the archives the switched-on mods touch are merged into `mods\.cache`
+and read from there. The choice is kept in `mods\enabled.txt`.
 
 `tools/weapon_import.py` turns a glTF model into a weapon's files (re/notes/MODELS.md); `tools/dat2.py` and
 `tools/xbt.py` take the archives and textures apart.

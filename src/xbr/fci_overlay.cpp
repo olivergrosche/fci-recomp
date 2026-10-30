@@ -1,13 +1,16 @@
-// FCI: the mod menu, a Dear ImGui overlay over the game (src/fci_mods.c holds the mods). F1 or both sticks
-// pressed together open and close it; while it is open the game gets no input (a neutral pad, no keys, no
-// mouse) and the menu takes the keyboard, the mouse and the controller. A choice is saved at once and takes
-// effect when the game next opens its archives (a level change, the main menu: a new instance).
+// FCI: the mod menu, a Dear ImGui overlay over the game (src/fci_mods.c holds the mods). F1 or Insert (fci.ini
+// mods-menu-key) or a controller's both sticks pressed together open and close it; while it is open the game
+// gets no input (a neutral pad, no keys, no mouse) and the menu takes the keyboard, the mouse and the
+// controller. A choice is saved at once and takes effect when the game next opens its archives (a level
+// change, the main menu: a new instance).
 #include <windows.h>
 
 #include <algorithm>
 #include <atomic>
 #include <iterator>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -23,12 +26,17 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
                                                              LPARAM lParam);
 
 extern "C" {
-void fci_input_release_all(void);   // fci_input.c
+void fci_input_release_all(void);           // fci_input.c
+int fci_input_key_code(const char* name);   // fci_input.c: F1, INSERT, ... as in the bindings
+int fci_input_stick_click_held(void);       // fci_input.c: a key bound to a stick click is held
 }
 
 namespace {
 
 constexpr uint8_t kThumbs = 0x40 | 0x80;   // the pad report's digital byte: both stick clicks
+// the keys that open and close the menu: fci.ini mods-menu-key (RECOMP_FCI_MODS_KEY), names as in the
+// bindings. Insert besides F1: a browser in front of a remote desktop keeps F1 (its help) for itself.
+constexpr const char* kDefaultKeys = "F1,INSERT";
 constexpr float kFontPixels = 36.0f;
 
 std::atomic<bool> g_open{false};
@@ -37,11 +45,35 @@ std::atomic<int> g_focus{
 std::atomic<bool> g_hold{false};   // the game sees a neutral pad until every button is let go
 HWND g_hwnd = nullptr;
 bool g_ready = false;
+std::vector<int> g_keys;   // virtual keys
+std::string g_key_names;   // for the menu's hint: "F1 or INSERT"
 
-void SetOpen(bool on)
+void ReadKeys()
+{
+    const char* e = std::getenv("RECOMP_FCI_MODS_KEY");
+    std::string list = e && *e ? e : kDefaultKeys;
+    size_t at = 0;
+    while (at <= list.size()) {
+        size_t end = list.find(',', at);
+        std::string name = list.substr(at, end == std::string::npos ? std::string::npos : end - at);
+        name.erase(0, name.find_first_not_of(" \t"));
+        name.erase(name.find_last_not_of(" \t") + 1);
+        int vk = name.empty() ? -1 : fci_input_key_code(name.c_str());
+        if (vk > 0) {
+            g_keys.push_back(vk);
+            g_key_names += (g_key_names.empty() ? "" : " or ") + name;
+        }
+        if (end == std::string::npos)
+            break;
+        at = end + 1;
+    }
+}
+
+void SetOpen(bool on, const char* by)
 {
     if (g_open.exchange(on) == on)
         return;
+    std::fprintf(stderr, "[FCI] mod menu %s (%s)\n", on ? "opened" : "closed", by);
     g_hold = true;
     g_focus = on ? 3 : 0;
     fci_input_release_all();
@@ -103,7 +135,7 @@ void DrawMenu()
         return;
     }
     if (!open)
-        SetOpen(false);
+        SetOpen(false, "the window's X");
     int n = fci_mods_count();
     ImGui::TextDisabled("A choice takes effect at the next level change or after Quit to Main Menu.");
     if (fci_mods_pending())
@@ -160,9 +192,10 @@ void DrawMenu()
     }
     ImGui::Separator();
     if (ImGui::Button("Close"))
-        SetOpen(false);
+        SetOpen(false, "Close");
     ImGui::SameLine();
-    ImGui::TextDisabled("F1 or both sticks pressed: open and close");
+    ImGui::TextDisabled("%s%sboth sticks pressed: open and close", g_key_names.c_str(),
+                        g_keys.empty() ? "" : " or ");
     ImGui::End();
 }
 
@@ -196,6 +229,7 @@ void fci_overlay_init(HWND hwnd)
     s.Colors[ImGuiCol_WindowBg].w = 0.92f;
     s.ScaleAllSizes(1.5f);
     ImGui_ImplWin32_Init(hwnd);
+    ReadKeys();
     g_ready = true;
 }
 
@@ -213,15 +247,23 @@ bool fci_overlay_message(HWND w, UINT msg, WPARAM wp, LPARAM lp, LRESULT* result
 {
     if (!g_ready)
         return false;
-    if (msg == WM_KEYDOWN && wp == VK_F1 && !(lp & (1 << 30))) {
-        SetOpen(!g_open);
+    // a menu key toggles once per press: its own down state, not the message's repeat bit, which a
+    // remote desktop's injected keys need not carry
+    static int held = 0;
+    bool menu_key = std::find(g_keys.begin(), g_keys.end(), int(wp)) != g_keys.end();
+    if (menu_key && (msg == WM_KEYDOWN || msg == WM_KEYUP)) {
+        if (msg == WM_KEYDOWN && held != int(wp))
+            SetOpen(!g_open, "key");
+        held = msg == WM_KEYDOWN ? int(wp) : 0;
         *result = 0;
         return true;
     }
+    if (msg == WM_KILLFOCUS)
+        held = 0;
     if (!g_open)
         return false;
     if (msg == WM_KEYDOWN && wp == VK_ESCAPE) {
-        SetOpen(false);
+        SetOpen(false, "Escape");
         *result = 0;
         return true;
     }
@@ -309,13 +351,15 @@ extern "C" void fci_overlay_pad(int pad, uint8_t* report)
     static bool chord[4], b_down[4], steering;
     if (pad < 0 || pad >= 4 || !g_ready)
         return;
-    bool both = (report[2] & kThumbs) == kThumbs;
+    // the sticks of a controller (or a test script) only: the report carries the keyboard's bindings too,
+    // and their stick clicks, crouch (Shift) and zoom (middle mouse button), are held together in play
+    bool both = (report[2] & kThumbs) == kThumbs && !fci_input_stick_click_held();
     if (both && !chord[pad])
-        SetOpen(!g_open);
+        SetOpen(!g_open, "both sticks");
     chord[pad] = both;
     bool b = report[5] > 0x40;
     if (g_open && b && !b_down[pad])
-        SetOpen(false);
+        SetOpen(false, "B");
     b_down[pad] = b;
     if (pad == 0 && (g_open || steering)) {
         PadToMenu(report, g_open && !both);
