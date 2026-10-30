@@ -295,3 +295,142 @@ def test_stretch_stops_at_the_ends_of_a_joint(tmp_path):
     assert close(p, (0, -0.15, 1), 1e-6) and close(xbg.mat_vec(m, (1, 0, 0)), (0, -0.5, 0), 1e-6)
     p, _ = fit.place((-0.1, 0.0, 0.0), [(0, 1.0)])  # behind its joint
     assert close(p, (0, 0.05, 1), 1e-6)
+
+
+def test_rotation_and_merged_settings():
+    assert close(ci.mat_vec(ci.rotation((1, 0, 0), 90), (0, 1, 0)), (0, 0, 1), 1e-9)
+    assert close(ci.mat_vec(ci.rotation((0, 0, 2), -90), (1, 0, 0)), (0, -1, 0), 1e-9)
+    a = {"fit": {"size": {"A": 1, "B": 2}, "thickness": 1}, "texture": {"size": 64}, "x": [1]}
+    b = {"fit": {"size": {"B": 3}}, "x": [2]}
+    assert ci.merged(a, None, b) == {
+        "fit": {"size": {"A": 1, "B": 3}, "thickness": 1},
+        "texture": {"size": 64},
+        "x": [2],
+    }
+    assert a["fit"]["size"]["B"] == 2  # the layers stay as they were
+
+
+def test_reshape_turns_the_chosen_vertices_about_the_pivot(tmp_path):
+    joints, prims, g = ci.read_source(gltf(tmp_path), ["x", "y", "z"], 1.0)
+    rule = {"joint": "bone3", "pivot": [0.7, 0, 0], "axis": [0, 0, 1], "angle": 90}
+    ci.reshape(joints, prims, g, [rule])
+    body = prims[0]
+    assert close(body["pos"][2], (0.65, 0.0, 0.0), 1e-6) and close(body["pos"][4], (0.7, -0.1, -0.2), 1e-6)
+    assert close(body["normal"][2], (0, 0, 1), 1e-6) and close(body["pos"][0], A[0], 1e-6)  # others stay
+    joints, prims, g = ci.read_source(gltf(tmp_path), ["x", "y", "z"], 1.0)
+    ci.reshape(joints, prims, g, [dict(rule, box=[[0.65, -1, -1], [1, 1, 1]], material="skin")])
+    assert close(prims[0]["pos"][2], (0.65, 0.0, 0.0), 1e-6) and close(prims[0]["pos"][4], E[0], 1e-6)
+    with pytest.raises(SystemExit, match="no vertex"):
+        ci.reshape(joints, prims, g, [dict(rule, box=[[5, 5, 5], [6, 6, 6]])])
+
+
+def test_new_joints_take_the_far_end_of_their_parent(tmp_path):
+    joints, prims, _ = ci.read_source(gltf(tmp_path), ["x", "y", "z"], 1.0)
+    bones = ci.add_joints(
+        joints, prims, [{"name": "Fist", "parent": "bone1", "at": 0.22, "blend": 0.05, "bone": "Bone4"}]
+    )
+    assert bones == {"Fist": "Bone4"}
+    fist = joints[-1]
+    assert fist.name == "Fist" and fist.parent == 0 and close(fist.at, (0.22, 0, 0)) and fist.rot == joints[0].rot
+    skin = prims[0]["skin"]
+    assert close([w for _, w in skin[0]], [0.8, 0.2], 1e-9) and [j for j, _ in skin[0]] == [4, 0]  # A: 0.03 past
+    assert skin[3] == [(0, 0.5), (1, 0.5)]  # D: before the cut
+    with pytest.raises(SystemExit, match="lies past"):
+        ci.add_joints(joints, prims, [{"name": "Far", "parent": "bone1", "at": 5.0}])
+
+
+def with_bump(model_bytes, material, texture):
+    b = bytearray(model_bytes)
+    struct.pack_into("<i", b, xbg.Model(model_bytes).materials[material].at + 0x14, texture)
+    return bytes(b)
+
+
+def test_texture_slots_name_other_files_of_the_model():
+    m = xbg.Model(skinned_template())
+    assert ci.texture_slots(m, 0, {}) == (0, None)
+    assert ci.texture_slots(m, 0, {"diffuse": "C/LOGO_DF.XBT"}) == (1, None)
+    with pytest.raises(SystemExit, match="no texture"):
+        ci.texture_slots(m, 0, {"diffuse": "c/other.xbt"})
+    with pytest.raises(SystemExit, match="no bump"):
+        ci.texture_slots(m, 0, {"bump": "c/logo_df.xbt"})
+    bumped = xbg.Model(with_bump(skinned_template(), 0, 1))
+    assert ci.texture_slots(bumped, 0, {}) == (0, 1)
+    assert ci.texture_slots(bumped, 0, {"diffuse": "c/logo_df.xbt", "bump": "c/body_df.xbt"}) == (1, 0)
+    with pytest.raises(SystemExit, match="two texture files"):
+        ci.texture_slots(bumped, 0, {"diffuse": "c/logo_df.xbt"})
+    moved = xbg.Model(ci.with_textures(bumped.b, 0, 1, 0)).materials[0]
+    assert (moved.diffuse, moved.bump) == (1, 0)
+
+
+def mods_config(tmp_path, extra=None):
+    """a config of three mods: two alternatives for c/body.xbg, hats alone in L1"""
+    src = gltf(tmp_path)
+    folder = tmp_path / "extract"
+    (folder / "c").mkdir(parents=True, exist_ok=True)
+    (folder / "c" / "body.xbg").write_bytes(skinned_template())
+    (folder / "c" / "other.xbg").write_bytes(skinned_template())
+    (folder / "h").mkdir(exist_ok=True)
+    (folder / "h" / "hat.xbg").write_bytes(template())
+    model = {"model": "c/body.xbg", "material": 0}
+    cfg = {
+        "template": "extract",
+        "archives": ["levels/L1/l1", "levels/L2/l2"],
+        "axes": ["x", "y", "z"],
+        "scale": 1.0,
+        "texture": {"size": 64},
+        "creatures": {
+            "thin": {"source": src.name, "fit": {"thickness": 0.5, "ground": []}},
+            "thick": {"source": src.name, "fit": {"thickness": 2.0, "ground": []}, "texture": {"gain": 1.5}},
+        },
+        "mods": [
+            {"out": "mods/a-thin", "mod": {"name": "A"}, "models": [dict(model, creature="thin")]},
+            {"out": "mods/a-thick", "mod": {"name": "B"}, "models": [dict(model, creature="thick")]},
+            {"out": "mods/hats", "mod": {"name": "C"}, "archives": ["levels/L1/l1"], "hide": ["h/hat.xbg"]},
+        ],
+    }
+    cfg["mods"] += extra or []
+    return cfg
+
+
+def test_one_config_builds_several_mods(tmp_path):
+    cfg = mods_config(tmp_path)
+    assert ci.model_config(ci.mod_configs(cfg)[1], cfg["mods"][1]["models"][0])["texture"] == {"size": 64, "gain": 1.5}
+    ci.build(cfg, tmp_path)
+    out = tmp_path / "mods"
+    thin = xbg.Model((out / "a-thin/levels/L1/l1/c/body.xbg").read_bytes())
+    thick = xbg.Model((out / "a-thick/levels/L2/l2/c/body.xbg").read_bytes())
+    lift = lambda m: max(v["pos"][2] for sm in m.submeshes[:1] for v in m.placed(sm))  # noqa: E731
+    assert lift(thick) > lift(thin)  # vertex A stands off its bone by the thickness
+    assert (out / "a-thick/.files").read_text().split() == [
+        f"levels/{a}/c/{f}" for a in ("L1/l1", "L2/l2") for f in ("body.xbg", "body_df.xbt")
+    ]
+    assert sorted(p.relative_to(out / "hats").as_posix() for p in (out / "hats").rglob("*") if p.is_file()) == [
+        ".files",
+        "levels/L1/l1/h/hat.xbg",
+        "mod.ini",
+    ]
+    with pytest.raises(SystemExit, match="no mod nothing"):
+        ci.build(cfg, tmp_path, only=["nothing"])
+
+
+def test_mods_of_different_models_must_not_share_a_file(tmp_path):
+    other = {"out": "mods/b", "models": [{"model": "c/other.xbg", "material": 0, "creature": "thin"}]}
+    with pytest.raises(SystemExit, match="a-thin and b both write levels/L1/l1/c/body_df.xbt"):
+        ci.build(mods_config(tmp_path, [other]), tmp_path)
+    other["models"][0]["texture"] = {"diffuse": "c/logo_df.xbt"}  # its own file: no conflict
+    ci.build(mods_config(tmp_path, [other]), tmp_path, only=["b"])
+    m = xbg.Model((tmp_path / "mods/b/levels/L1/l1/c/other.xbg").read_bytes())
+    assert m.materials[0].diffuse == 1 and (tmp_path / "mods/b/levels/L1/l1/c/logo_df.xbt").exists()
+    assert not (tmp_path / "mods/a-thin").exists()  # only the mod named was built
+
+
+def test_a_rebuild_removes_only_the_files_it_no_longer_writes(tmp_path):
+    cfg = mods_config(tmp_path)
+    ci.build(cfg, tmp_path, only=["a-thin"])
+    mod = tmp_path / "mods/a-thin"
+    (mod / "levels/L1/l1/c/mine.txt").write_text("not the importer's")
+    cfg["mods"][0]["models"][0]["texture"] = {"diffuse": "c/logo_df.xbt"}
+    ci.build(cfg, tmp_path, only=["a-thin"])
+    assert not (mod / "levels/L1/l1/c/body_df.xbt").exists() and (mod / "levels/L1/l1/c/logo_df.xbt").exists()
+    assert (mod / "levels/L1/l1/c/mine.txt").exists()
+    assert "levels/L2/l2/c/logo_df.xbt" in (mod / ".files").read_text().split()

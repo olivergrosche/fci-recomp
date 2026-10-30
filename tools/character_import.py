@@ -3,8 +3,8 @@ skeleton mapped onto the character's 3ds Max Biped bones, its mesh conformed to 
 and skinned to those bones, its materials in one texture; the files laid out as a mod folder for the
 game's mod loader (re/notes/CHARACTERS.md, "Importing a character"; README, "Mods").
 
-  python -B tools/character_import.py <config.json>          the mod folder
-  python -B tools/character_import.py info <config.json>     the joints, the mapping and the fit per bone
+  python -B tools/character_import.py <config.json> [mod ...]       the mod folders (all, or those named)
+  python -B tools/character_import.py info <config.json> [mod ...]  the joints, the mapping and the fit per bone
 
 The config (paths relative to it):
 
@@ -21,11 +21,26 @@ The config (paths relative to it):
             "keep": ["Bip01_Head"], "ground": ["Bip01_L Foot", "Bip01_R Foot"],
             "split": {"Bip01_L Forearm": ["Bip01_L Forearm RollBone"]}},  (keep, ground, split: these defaults)
     "bones": {"bip01 neck1": null, "frame mandible lower left": "Bip01_Jaw"},
+    "joints": [{"name": "l fist", "parent": "bip01 l forearm", "at": 0.42, "bone": "Bip01_L Hand"}],
+                                                           new joints: the parent's vertices past "at" metres
+    "reshape": [{"joint": "bip01 spine1", "material": "grunt_head_and_back", "pivot": [0, 0.1, 0.9],
+                 "axis": [1, 0, 0], "angle": 35}],        source parts turned before the fit (game axes, metres)
     "drop": ["elite_inset_lights"],                        glTF materials left out (default: the transparent ones)
-    "texture": {"size": 1024, "gain": 1.6, "gloss": [126, 155], "matte": [22, 18, 18]},
+    "texture": {"size": 1024, "gain": 1.6, "gloss": [126, 155], "matte": [22, 18, 18],
+                "diffuse": ".../vest_df.xbt", "bump": ".../poches_df.xbt"},  (the files that take the atlas and
+                                                           the flat normal map; default the material's own)
     "hide": ["animations/characters/hats/beret01.xbg"],    models made invisible (hats)
     "models": [{"model": "animations/.../pirate_kit_01.xbg", "source": "elite/elite.gltf", "material": 0}]
   }
+
+Several mods from one config: "mods": [{"out": ..., "mod": {...}, "models": [...]}, ...], each entry over the
+rest of the config; "creatures": {"grunt": {"source": ..., "fit": {...}, ...}} are settings a model takes with
+"creature": "grunt" (a model's settings: the config's or its mod's, then its creature's, then its own; nested
+objects such as "fit" and "texture" merge). A mod without models hides its "hide" models in the archives that
+hold them and "archives" names. Mods that replace different models must not write the same file (the game's
+mod menu would switch one off with the other); those that replace the same models are alternatives and do.
+Each mod folder lists what it wrote in .files (the game's loader skips dot files); a rebuild removes the files
+of that list it no longer writes.
 
 The mapping: a joint goes to the bone of the same name (case, spaces and underscores aside: Character Studio's
 "bip01 l upperarm" is the Biped's "Bip01_L UpperArm"), "bones" overrides that (null: no bone). A joint
@@ -48,7 +63,18 @@ The materials go into one atlas at their own resolution (shelf-packed): base col
 emission, "gain" (with a soft shoulder), "matte" in alpha-masked holes, gloss from 1 - roughness as alpha.
 It replaces the diffuse texture of the template's "material" (a 28-byte vertex shader in the characters),
 a flat normal map its bump texture; every mesh part (_LOD0, _LOD1) gets the whole mesh, the other skinned
-parts (body armour, logo plates) one invisible triangle, "parts": {"NAME": "keep"} keeps one.
+parts (body armour, logo plates) one invisible triangle, "parts": {"NAME": "keep"} keeps one. Texture files
+are often shared (a level's dead bodies wear the mercenaries' trousers): "diffuse" and "bump" can name any
+other two of the template's textures, ideally ones no other model uses, and the material is pointed at them
+(each level's file list names a model's own textures; a new file name might not be loaded).
+
+"joints" adds joints to the source: the vertices of "parent" past "at" metres along its x axis (blended over
+"blend", default 0.03) move to the new joint, which goes to "bone": a Grunt's fist, part of its forearm,
+goes to the hand bone, so that the forearm fits the template's and the weapon sits in the fist.
+
+"reshape" turns the vertices whose largest weight is on "joint", whose material is "material" and that lie
+in "box" (any of the three may be left out) rigidly about "pivot", before the fit: a part that the fit would
+turn with its joint (a Grunt's methane tank tips back with the straightened spine) is turned the other way.
 """
 
 import argparse
@@ -56,6 +82,7 @@ import fnmatch
 import json
 import math
 from pathlib import Path
+import struct
 import sys
 
 from PIL import Image, ImageChops
@@ -143,6 +170,27 @@ def align(src_dir, src_hinge, dst_dir, dst_hinge):
 
 def angle(a, b):
     return math.degrees(math.acos(max(-1.0, min(1.0, dot(unit(a), unit(b))))))
+
+
+def rotation(axis, degrees):
+    """the rotation by degrees about axis (right-handed)"""
+    x, y, z = unit(tuple(axis))
+    a = math.radians(degrees)
+    c, s, t = math.cos(a), math.sin(a), 1 - math.cos(a)
+    return (
+        (t * x * x + c, t * x * y - s * z, t * x * z + s * y),
+        (t * x * y + s * z, t * y * y + c, t * y * z - s * x),
+        (t * x * z - s * y, t * y * z + s * x, t * z * z + c),
+    )
+
+
+def merged(*layers):
+    """dicts merged in order, nested dicts merged as well (other values replaced)"""
+    out = {}
+    for layer in layers:
+        for k, v in (layer or {}).items():
+            out[k] = merged(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+    return out
 
 
 # --- the source: a skinned glTF, in the game's axes and metres ------------------------------------------
@@ -239,6 +287,63 @@ def read_source(path, axes, scale):
             out["node"] = node.get("name", str(n))
             prims.append(out)
     return joints, prims, gltf
+
+
+def reshape(joints, prims, gltf, rules):
+    """turn parts of the source rigidly before the fit: per rule the vertices whose largest weight is on
+    "joint", whose material is "material" and that lie in "box" ([low corner, high corner]; any of the three
+    may be missing) about "pivot" by "angle" degrees about "axis" (game axes, metres)"""
+    names = [m.get("name", str(i)) for i, m in enumerate(gltf.g.get("materials", []))]
+    for rule in rules:
+        rot, pivot = rotation(rule["axis"], rule["angle"]), tuple(rule["pivot"])
+        joint = key(rule["joint"]) if "joint" in rule else None
+        lo, hi = rule.get("box", ((-1e9,) * 3, (1e9,) * 3))
+        moved = 0
+        for p in prims:
+            if "material" in rule and names[p["material"]] != rule["material"]:
+                continue
+            for i, skin in enumerate(p["skin"]):
+                if joint is not None and key(joints[skin[0][0]].name) != joint:
+                    continue
+                if not all(a <= c <= b for a, c, b in zip(lo, p["pos"][i], hi)):
+                    continue
+                p["pos"][i] = add(pivot, mat_vec(rot, sub(p["pos"][i], pivot)))
+                p["normal"][i] = mat_vec(rot, p["normal"][i])
+                moved += 1
+        if not moved:
+            raise SystemExit(f"error: reshape {rule}: no vertex has that joint and material in that box")
+
+
+def add_joints(joints, prims, rules):
+    """new joints that take the far end of a joint's vertices (a Grunt's fist off its forearm): per rule
+    "name", "parent" (a joint), "at" (metres along the parent's x axis), "blend" (metres either side of the
+    cut over which the weights pass on, default 0.03), "bone" (where it goes); returns {name: bone}"""
+    bones = {}
+    for rule in rules:
+        parent = next((j for j, joint in enumerate(joints) if key(joint.name) == key(rule["parent"])), None)
+        if parent is None:
+            raise SystemExit(f"error: joints: the glTF has no joint {rule['parent']}")
+        pj, cut, blend = joints[parent], rule["at"], rule.get("blend", 0.03)
+        new = len(joints)
+        joints.append(Joint(rule["name"], parent, pj.rot, add(pj.at, scaled(pj.axes[0], cut))))
+        moved = 0
+        for p in prims:
+            for i, (pos, skin) in enumerate(zip(p["pos"], p["skin"])):
+                w = dict(skin).get(parent, 0.0)
+                if w <= 0:
+                    continue
+                s = dot(sub(pos, pj.at), pj.axes[0]) - cut
+                t = min(1.0, max(0.0, (s + blend) / (2 * blend))) if blend > 0 else float(s >= 0)
+                if t <= 0:
+                    continue
+                moved += 1
+                rest = [(j, v) for j, v in skin if j != parent]
+                rest += [(j, v) for j, v in ((parent, w * (1 - t)), (new, w * t)) if v > 1e-6]
+                p["skin"][i] = sorted(rest, key=lambda jw: -jw[1])
+        if not moved:
+            raise SystemExit(f"error: joints: no vertex of {rule['parent']} lies past {cut} m")
+        bones[rule["name"]] = rule.get("bone")
+    return bones
 
 
 # --- the mapping ----------------------------------------------------------------------------------------
@@ -697,6 +802,85 @@ def rebuild_character(template, verts, tris, material, overrides=None):
     return xbg.rebuild_skinned(template, parts, scale=scale if scale > model.scale else None), roles
 
 
+def texture_slots(model, material, tex):
+    """(diffuse, bump) texture numbers that take the atlas and the flat normal map: the material's own, or
+    the files tex "diffuse" and "bump" name (any two of the model's textures)"""
+    mat = model.materials[material]
+    paths = [norm_path(t) for t in model.textures]
+
+    def pick(name, own):
+        if name is None:
+            return own
+        if norm_path(name) not in paths:
+            raise SystemExit(f"error: the model has no texture {name}")
+        return paths.index(norm_path(name))
+
+    diffuse, bump = pick(tex.get("diffuse"), mat.diffuse), pick(tex.get("bump"), mat.bump)
+    if diffuse is None:
+        raise SystemExit(f"error: material {material} has no texture")
+    if bump is not None and mat.bump is None:
+        raise SystemExit(f"error: material {material} has no bump texture to point elsewhere")
+    if diffuse == bump:
+        raise SystemExit("error: the atlas and the normal map need two texture files")
+    return diffuse, bump
+
+
+def with_textures(model_bytes, material, diffuse, bump):
+    """the model with the material's diffuse and bump texture numbers set"""
+    b = bytearray(model_bytes)
+    at = xbg.Model(model_bytes).materials[material].at
+    struct.pack_into("<i", b, at + 0x0C, diffuse)
+    if bump is not None:
+        struct.pack_into("<i", b, at + 0x14, bump)
+    return bytes(b)
+
+
+def convert(template, mcfg, base, only_info=False):
+    """one model: {"fit", "text"} and, unless only_info, "model" (the rebuilt bytes), "atlas", "diffuse" and
+    "bump" (the paths of the files they go to)"""
+    model = xbg.Model(template)
+    source = Path(base, mcfg["source"])
+    joints, prims, gltf = read_source(source, mcfg.get("axes", ["x", "-z", "y"]), mcfg.get("scale", 1.0))
+    bones = dict(mcfg.get("bones") or {})
+    if mcfg.get("joints"):
+        bones.update(add_joints(joints, prims, mcfg["joints"]))
+    if mcfg.get("reshape"):
+        reshape(joints, prims, gltf, mcfg["reshape"])
+    direct = bone_map(joints, model, bones)
+    fit = Fit(joints, prims, model, direct, mcfg.get("fit"))
+    out = {"fit": fit, "text": f"{source.name}, {len(joints)} joints, {len(direct)} mapped"}
+    if only_info:
+        return out
+    tex = mcfg.get("texture", {})
+    material = mcfg.get("material", 0)
+    diffuse, bump = texture_slots(model, material, tex)
+    drop = set(mcfg.get("drop", [])) or None
+    names = [m.get("name", str(i)) for i, m in enumerate(gltf.g.get("materials", []))]
+    used = sorted({p["material"] for p in prims})
+    if drop is None:
+        keep = [m for m in used if gltf.g["materials"][m].get("alphaMode") != "BLEND"]
+    else:
+        keep = [m for m in used if names[m] not in drop]
+    atlas, place = build_atlas(gltf, keep, tex)
+    verts, tris = conformed_mesh(prims, fit, place, set(keep))
+    rebuilt, roles = rebuild_character(template, verts, tris, material, mcfg.get("parts"))
+    rebuilt = with_textures(rebuilt, material, diffuse, bump)
+    new = xbg.Model(rebuilt)
+    out.update(
+        model=rebuilt,
+        atlas=atlas,
+        diffuse=norm_path(model.textures[diffuse]),
+        bump=norm_path(model.textures[bump]) if bump is not None else None,
+    )
+    out["text"] += (
+        f"\n  {len(tris)} triangles, {len(verts)} vertices, materials {', '.join(names[m] for m in keep)}; "
+        f"parts {', '.join(f'{p.name} {r}' for p, r in zip(model.parts, roles))}; "
+        f"{len(new.submeshes)} submeshes, position scale {new.scale:.6g}; texture {atlas.width}x{atlas.height} "
+        f"in {out['diffuse'].split('/')[-1]}, flat normals in {(out['bump'] or '-').split('/')[-1]}"
+    )
+    return out
+
+
 # --- the files ------------------------------------------------------------------------------------------
 
 
@@ -712,7 +896,7 @@ class Source:
         self.folder = Path(base, cfg["template"]) if cfg.get("template") else None
         if not self.game and not self.folder:
             raise SystemExit('error: the config needs "game" (its game folder) or "template" (extracted files)')
-        self.cache = {}
+        self.cache, self.held = {}, {}
 
     def archive(self, rel):
         if rel not in self.cache:
@@ -728,30 +912,47 @@ class Source:
 
     def holders(self, path):
         """the level archives that hold path (archive names as the mods folder wants them)"""
+        if not self.held:  # the indexes only, once
+            for fat in sorted(self.game.glob("levels/*/*.fat")):
+                rel = fat.relative_to(self.game).with_suffix("").as_posix()
+                self.held[rel] = {e[2] for e in dat2.index(fat.read_bytes())}
         h = dat2.name_hash(path)
-        out = []
-        for fat in sorted(self.game.glob("levels/*/*.fat")):
-            if any(e[2] == h for e in dat2.index(fat.read_bytes())):
-                out.append(fat.relative_to(self.game).with_suffix("").as_posix())
-        return out
+        return [rel for rel, hashes in self.held.items() if h in hashes]
 
 
-def write_mod_ini(out, mod):
-    lines = [f"{k} = {mod[k]}" for k in ("name", "group", "description", "credit") if mod.get(k)]
-    (out / "mod.ini").write_text("\n".join(lines) + "\n", encoding="utf-8")
+def matching(names, patterns):
+    return [a for a in names if not patterns or any(fnmatch.fnmatch(a.lower(), p.lower()) for p in patterns)]
 
 
-def build(cfg, base, only_info=False):
-    src = Source(cfg, base)
-    out = Path(base, cfg["out"]) if cfg.get("out") else None
-    tex = cfg.get("texture", {})
-    for mc in cfg["models"]:
-        mcfg = {**cfg, **mc}
+def model_config(cfg, mc):
+    """a model's settings: the config's (or its mod's), its creature's, its own"""
+    creatures = cfg.get("creatures", {})
+    name = mc.get("creature")
+    if name is not None and name not in creatures:
+        raise SystemExit(f'error: no creature "{name}" in "creatures"')
+    rest = {k: v for k, v in cfg.items() if k not in ("models", "mods", "creatures")}
+    return merged(rest, creatures.get(name), mc)
+
+
+def mod_configs(cfg):
+    """the mods of a config: its "mods" over the rest, or the config itself"""
+    if "mods" not in cfg:
+        return [cfg]
+    rest = {k: v for k, v in cfg.items() if k != "mods"}
+    return [merged(rest, m) for m in cfg["mods"]]
+
+
+def plan(cfg, src):
+    """what a mod writes: {"id", "cfg", "models": [{"cfg", "path", "archives", "template", "files"}],
+    "hats": {archive: [paths]}, "writes": {(archive, path)}}"""
+    models, hats = [], {}
+    for mc in cfg.get("models", []):
+        mcfg = model_config(cfg, mc)
         path = norm_path(mc["model"])
         archives = mcfg.get("archives", [])
         if src.game:  # the level archives that hold the model, those the patterns name if any
             held = src.holders(path)
-            archives = [a for a in held if not archives or any(fnmatch.fnmatch(a.lower(), p.lower()) for p in archives)]
+            archives = matching(held, archives)
             if not archives:
                 raise SystemExit(f"error: no level archive {'that the config names ' if held else ''}holds {path}")
         elif not archives:
@@ -760,77 +961,131 @@ def build(cfg, base, only_info=False):
         if template is None:
             raise SystemExit(f"error: {archives[0]} has no {path}")
         model = xbg.Model(template)
-        joints, prims, gltf = read_source(
-            Path(base, mcfg["source"]), mcfg.get("axes", ["x", "-z", "y"]), mcfg.get("scale", 1.0)
-        )
-        direct = bone_map(joints, model, mcfg.get("bones"))
-        fit = Fit(joints, prims, model, direct, mcfg.get("fit"))
-        print(f"{path}: {Path(mcfg['source']).name}, {len(joints)} joints, {len(direct)} mapped")
+        diffuse, bump = texture_slots(model, mcfg.get("material", 0), mcfg.get("texture", {}))
+        files = [path] + [norm_path(model.textures[t]) for t in (diffuse, bump) if t is not None]
+        models.append({"cfg": mcfg, "path": path, "archives": archives, "template": template, "files": files})
+        for rel in archives:
+            have = hats.setdefault(rel, [])
+            have += [norm_path(h) for h in mcfg.get("hide", []) if norm_path(h) not in have]
+    if not models:  # hats alone: in the archives that hold them
+        for h in cfg.get("hide", []):
+            where = matching(src.holders(norm_path(h)), cfg.get("archives", [])) if src.game else cfg["archives"]
+            for rel in where:
+                hats.setdefault(rel, []).append(norm_path(h))
+    hats = {rel: [h for h in hs if src.read(rel, h) is not None] for rel, hs in hats.items()}
+    writes = {(rel, f) for m in models for rel in m["archives"] for f in m["files"]}
+    writes |= {(rel, h) for rel, hs in hats.items() for h in hs}
+    out = cfg.get("out")
+    return {"id": Path(out).name if out else None, "cfg": cfg, "models": models, "hats": hats, "writes": writes}
+
+
+def check_conflicts(plans):
+    """mods that replace different models must not write the same file"""
+    owner = {}
+    for p in plans:
+        replaced = frozenset(m["path"] for m in p["models"])
+        for f in sorted(p["writes"]):
+            for other, theirs in owner.get(f, []):
+                if theirs != replaced:
+                    raise SystemExit(
+                        f"error: {other} and {p['id']} both write {f[0]}/{f[1]} but replace different models "
+                        "(the game's mod menu would switch one off with the other)"
+                    )
+            owner.setdefault(f, []).append((p["id"], replaced))
+
+
+def build(cfg, base, only_info=False, only=None):
+    src = Source(cfg, base)
+    plans = [plan(m, src) for m in mod_configs(cfg)]
+    check_conflicts(plans)
+    ids = [p["id"] for p in plans]
+    for name in only or ():
+        if name not in ids:
+            raise SystemExit(f"error: no mod {name} in the config ({', '.join(map(str, ids))})")
+    for p in plans:
+        if not only or p["id"] in only:
+            build_mod(p, base, src, only_info, many=len(plans) > 1)
+
+
+def build_mod(p, base, src, only_info=False, many=False):
+    cfg = p["cfg"]
+    out = Path(base, cfg["out"]) if cfg.get("out") else None
+    if many:
+        print(f"== {p['id']}")
+    written = []
+    for m in p["models"]:
+        done = convert(m["template"], m["cfg"], base, only_info)
+        print(f"{m['path']}: {done['text']}")
         if only_info:
-            print(fit.table())
+            print(done["fit"].table())
             continue
-        drop = set(mcfg.get("drop", [])) or None
-        names = [m.get("name", str(i)) for i, m in enumerate(gltf.g.get("materials", []))]
-        used = sorted({p["material"] for p in prims})
-        if drop is None:
-            keep = [m for m in used if gltf.g["materials"][m].get("alphaMode") != "BLEND"]
-        else:
-            keep = [m for m in used if names[m] not in drop]
-        atlas, place = build_atlas(gltf, keep, tex)
-        verts, tris = conformed_mesh(prims, fit, place, set(keep))
-        material = mc.get("material", 0)
-        mat = model.materials[material]
-        if mat.diffuse is None:
-            raise SystemExit(f"error: material {material} of {path} has no texture")
-        rebuilt, roles = rebuild_character(template, verts, tris, material, mcfg.get("parts"))
-        new = xbg.Model(rebuilt)
-        print(
-            f"  {len(tris)} triangles, {len(verts)} vertices, materials {', '.join(names[m] for m in keep)}; "
-            f"parts {', '.join(f'{p.name} {r}' for p, r in zip(model.parts, roles))}; "
-            f"{len(new.submeshes)} submeshes, position scale {new.scale:.6g}; texture {atlas.width}x{atlas.height}"
-        )
-        diffuse = norm_path(model.textures[mat.diffuse])
-        bump = norm_path(model.textures[mat.bump]) if mat.bump is not None else None
         if out is None:
             continue
-        for rel in archives:
-            have = src.read(rel, path)
+        for rel in m["archives"]:
+            have = src.read(rel, m["path"])
             if have is None:
-                print(f"  {rel}: no {path}, skipped")
+                print(f"  {rel}: no {m['path']}, skipped")
                 continue
-            if have != template:
-                raise SystemExit(f"error: {rel} holds another {path} than {archives[0]}")
+            if have != m["template"]:
+                raise SystemExit(f"error: {rel} holds another {m['path']} than {m['archives'][0]}")
             folder = out / rel
-            write(folder / path, rebuilt)
-            old = src.read(rel, diffuse)
+            written.append(write(folder / m["path"], done["model"]))
+            old = src.read(rel, done["diffuse"])
             fmt = DXT1 if old is not None and xbt.header(old)[3] == DXT1 else DXT5
-            write(folder / diffuse, weapon_import.dxt_xbt(atlas, fmt))
-            if bump:
+            written.append(write(folder / done["diffuse"], weapon_import.dxt_xbt(done["atlas"], fmt)))
+            if done["bump"]:
                 flat = Image.new("RGB", (FLAT_NORMAL, FLAT_NORMAL), (128, 128, 255))
-                write(folder / bump, weapon_import.dxt_xbt(flat, DXT1))
-            for h in mcfg.get("hide", []):
-                hat = src.read(rel, norm_path(h))
-                if hat is not None:
-                    write(folder / norm_path(h), invisible_rigid(hat))
+                written.append(write(folder / done["bump"], weapon_import.dxt_xbt(flat, DXT1)))
             print(f"  -> {folder.relative_to(out).as_posix()}")
-    if out is not None and cfg.get("mod") and not only_info:
+    if out is None or only_info:
+        return
+    for rel, hats in p["hats"].items():
+        for h in hats:
+            written.append(write(out / rel / h, invisible_rigid(src.read(rel, h))))
+    if cfg.get("mod"):
         out.mkdir(parents=True, exist_ok=True)
         write_mod_ini(out, cfg["mod"])
+    tidy(out, written)
+
+
+def tidy(out, written):
+    """list what the mod folder holds now in <out>/.files; files the earlier list named that this build did
+    not write go, and folders they leave empty"""
+    listing = out / ".files"
+    now = sorted({w.relative_to(out).as_posix() for w in written})
+    before = listing.read_text(encoding="utf-8").split("\n") if listing.exists() else []
+    for rel in before:
+        f = out / rel
+        if rel and rel not in now and f.is_file():
+            f.unlink()
+            print(f"  removed {rel} (no longer written)")
+            d = f.parent
+            while d != out and not any(d.iterdir()):
+                d.rmdir()
+                d = d.parent
+    out.mkdir(parents=True, exist_ok=True)
+    listing.write_text("".join(f"{rel}\n" for rel in now), encoding="utf-8")
+
+
+def write_mod_ini(out, mod):
+    lines = [f"{k} = {mod[k]}" for k in ("name", "group", "description", "credit") if mod.get(k)]
+    (out / "mod.ini").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def write(path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
+    return path
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("args", nargs="+", metavar="[info] config")
+    ap.add_argument("args", nargs="+", metavar="[info] config [mod]")
     a = ap.parse_args()
-    command, path = ("info", a.args[1]) if a.args[0] == "info" and len(a.args) == 2 else ("build", a.args[0])
-    path = Path(path)
+    info = a.args[0] == "info" and len(a.args) > 1
+    path, only = Path(a.args[1 if info else 0]), a.args[2 if info else 1 :]
     cfg = json.loads(path.read_text(encoding="utf-8"))
-    build(cfg, path.parent, only_info=command == "info")
+    build(cfg, path.parent, only_info=info, only=only)
 
 
 if __name__ == "__main__":

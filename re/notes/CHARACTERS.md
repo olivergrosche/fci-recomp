@@ -201,37 +201,93 @@ bones (shared along the length where template bones lie between), the two larges
 Elite at thickness 0.8: legs keep the human hip height (0.955 m), the torso the elite's length, the crest
 ends 1.94 m up (spec-ops elite 2.03 m; pirate_kit_01 1.83 m).
 
-**Textures.** The glTF materials (transparent ones left out: the elite's inset lights, the Flood's fronds)
-go into one atlas at their own resolution (elite 1024 x 512, Flood 512 x 512, DXT5, all mip levels): base
-colour plus emission, gain 1.6 (elites) / 1.15 (Flood) with a soft roll-off, a dark matte in the
-alpha-tested holes (elite teeth and head), gloss 126 to 155 as alpha (the pirates' own range). It replaces the
-diffuse texture of one 28-byte material the template alone uses, a flat 64 x 64 normal map its bump
-texture; the whole mesh is that one material. Both LOD parts get the full mesh (1644 triangles for the
-elite); body armour parts get one triangle of no area; hats are replaced by models whose triangles have no
-area.
+**Textures.** The glTF materials (transparent ones left out: the elite's inset lights, the Grunt's, the
+Jackal's shield, the Flood's fronds) go into one atlas at their own resolution (elite and Jackal 1024 x 512,
+Grunt, Flood, Hunter, spec-ops elite 512 x 512, DXT5, all mip levels): base colour plus emission, gain 1.6
+(Covenant) / 1.15 (Flood) with a soft roll-off, a dark matte in the alpha-tested holes (teeth, Jackal head),
+gloss 126 to 155 as alpha (the pirates' own range). The whole mesh is one 28-byte material of the template;
+the atlas and a flat 64 x 64 normal map go into two of the template's texture files and the material is
+pointed at them (`"texture": {"diffuse", "bump"}`). The level's dead bodies and props share many of those
+files (`deadmerc_*` wear the mercenaries' trousers, `dead_pirate_*` the pirates' `id01a`), and the rebels'
+or pirates' kits share their normal maps, so each model writes files that only it uses where it has any (a
+file list per level names each model's textures, so new file names are avoided). Both LOD parts get the
+full mesh; body armour parts get one triangle of no area; hats are replaced by models whose triangles have
+no area.
 
-**Results (built 2026-10-30, not yet in the game).** Software renders in the bind pose and three poses
-driven by the template's bones (knees and elbows bent, arms down with a stride, head turned with a crouch
-and twisted hands) match the originals' poses without tears; front faces agree with the normals on 1613 of
-1644 elite triangles and 2032 of 2050 Flood ones (the exports' own folds, the two-sided teeth); weights equal
-the source's per vertex.
-
-| Mod (fci-modsrc `mods\<game>\`) | Template, material (texture replaced) | Source | Archives |
+| Template, material | Atlas in | Flat normals in | Other users of those files |
 |---|---|---|---|
-| evolution `halo-elite-pirates` | pirate_kit_01, 0 (`id01a`) | elite minor (blue) | 21, 22, 23, 24, 26 |
-| | pirate_kit_02, 0 (`id01b`) | elite major (red) | 21, 22, 23, 24, 26 |
-| | pirate_kit_03, 0 (`id01c`); scale doubled to 2/32767 | elite minor | 21, 22, 23, 24 |
-| | `hats\beret01` hidden (in 21 to 26 only pirates wear it) | | |
-| instincts `halo-elite-mercs` | merc_prtoto01, 1 (`pants`); merc_kit_03, 1 (`pants`) | elite minor | 00 to 07, 10, 11, 13 |
-| | merc_kit_04, 2 (`skin`) | elite major | the same |
-| | uber_kit_01, 0 (`uber_kit_01_df`, shared with mp_uber) | elite special | 13 |
-| | BODY_ARMOR parts and `hats\beret01`, `fatiguecap01`, `rangerhat01` hidden (only mercs wear them) | | |
-| instincts `halo-flood-trigens` | freak_sapper_kit_01, 1 (`freak_sapper_df`) | Flood combat human | 07, 10, 11, 13 |
+| merc_prtoto01, 1 | `merc_kit_01\pants_df` | `pants_nt` | deadmerc_chair, deadmerc_floor (it has no file of its own) |
+| merc_kit_03, 1 | `merc_kit_03\vest_df` | `poches_df` | none |
+| merc_kit_04, 2 | `helm_mask_df` | `helm_mask_nt` | none |
+| uber_kit_01, 0 | `uber_kit_01_df` | `uber_kit_01_nt` | mp_uber (multiplayer) |
+| freak_sapper_kit_01, 1 | `freak_sapper_vest_df` | `freak_sapper_vest_nt` | none |
+| chucker, 1 | `chucker_df` | `chucker_no` | none |
+| pirate_kit_01, 0 | `pirate\id01a` | `pirate\id12nt` | dead pirates only (`id01ant` is kits 2 and 3's) |
+| pirate_kit_02, 0 | `id01b` | `id01bnt` | dead_pirate_08 |
+| pirate_kit_03, 0 | `id16` | `id16nt` | none |
+| rebel_kit_01, 1 | `rebels\id03b` | `id03nt` | booniehat02 (worn by nobody); `id01a`, `id01nt` are kit 2's too |
+| rebel_kit_02, 0 | `id01c` | `id02b` | none |
+| rebel_kit_03, 1 | `id01b` | `id02a` | none |
+| feral_warrior_kit_02, 1 | `feral_warrior\id01c` | `id04b` | none |
+| feral_warrior_kit_03, 6 | `id05` | `id05nt` | none |
 
-The Instincts models and the Trigen hold +-1 m around the pelvis at 1/32767 and get 2/32767 (the Elite's
-crest is higher); kit_01 and _02 keep their 0.002. The Chucker (2.9 m, hunched, one huge arm) does not take
-the Flood combat elite: squeezed onto its skeleton the Flood becomes a stretched stick with a sunken head;
-it needs its own fit or another source.
+**Other creatures.** The Grunt, Jackal and Hunter are Character Studio rigs as well (17, 27 and 30 joints).
+
+- *Grunt* (1.32 m to the head, hips at 0.5 m, a hunched spine leaning 34 degrees forward, bow legs, no hand
+  joints). The legs have to reach from FCI's hips (0.955 m) to its feet, so they stretch 1.5 times; at
+  thickness 2.0 (thighs), 1.4 (calves), 1.3 (feet) they stay stocky instead of human sticks, knees and feet
+  offset 10 and 8 cm outward (along the bones' hinge axes, so knee and hip swings do not move them) keep the
+  bow legs. Straightening the spine tips the methane tank back to the horizontal; `reshape` turns the tank
+  (spine1's vertices behind y = 0.08) 35 degrees forward about its base first, so it stands up-back as in
+  Halo. The fist (forearm vertices past 0.40 m) becomes a joint on the hand bone (`joints`), so the forearm
+  fits FCI's and the weapon sits in the fist. Torso 1.1 / 1.0 / 0.9 (pelvis, spine, spine1), arms 1.3 / 1.25,
+  head 1.2, 12 cm down and 3 cm forward. It stands 1.82 m to the tank's tip, its head 1.31 to 1.76 m: a big
+  Grunt (shorter legs would leave the feet in the air or the hips off the bones). In poses that hold a
+  weapon close (forearms across the belly) the arms vanish in the shell: its chest is wider than a human's.
+- *Jackal* (digitigrade like the elite: thigh forward, calf back to the horselink, which merges into the
+  calf as the elite's; hips at 0.996 m, quills 2.10 m). Thickness 0.9, hands and feet 0.9, head 1.05 moved
+  8 cm forward and 4 cm down (it juts out as in Halo); 2.0 m to the quills. The energy shield (BLEND,
+  "frame shield") is left out; the wrist generator stays.
+- *Hunter* on the Chucker (2.95 m, hips at 1.58 m; the Chucker's at 0.96 m with splayed legs and a huge right
+  arm). Thighs and shins squash to 0.73 and 0.60 of their length, which suits the Chucker's crouch; the fuel
+  rod cannon arm lands on the huge right arm, the shield arm on the left. Thickness 1.1, legs 1.2, 2.8 m
+  tall. The Flood combat elite on the Chucker stays a stretched stick (thin limbs, sunken head), and the
+  carrier form has no Biped joints and only stubs of arms for the throwing arm: neither is used.
+
+**Mods.** One mod per FCI model and Halo creature, so the game's menu (which keeps only one of two mods that
+replace the same file) chooses per enemy: `halo/characters-instincts.json` and `characters-evolution.json`
+in fci-modsrc, each with its creatures and mods; `halo-hats-off` hides the hats separately, as the common
+mercenaries and kit 3 (Instincts) and all pirates, rebels and feral warriors (Evolution) share them. The
+importer refuses a config whose mods for different models write one file.
+
+| Game | FCI model | Mods (default on first) |
+|---|---|---|
+| Instincts | merc_prtoto01 | `halo-elite-merc-common` (Elite minor); `halo-grunt-merc-common`, `halo-jackal-merc-common` |
+| | merc_kit_03 | `halo-jackal-merc-kit03` (Jackal minor); `halo-elite-merc-kit03`, `halo-grunt-merc-kit03` |
+| | merc_kit_04 | `halo-elite-merc-heavy` (Elite major); `halo-grunt-merc-heavy`, `halo-jackal-merc-heavy` (majors) |
+| | uber_kit_01 | `halo-elite-specops-uber` |
+| | freak_sapper_kit_01 | `halo-flood-trigen` (Flood combat human) |
+| | chucker | `halo-chucker-hunter` |
+| | hats | `halo-hats-off` (beret01, fatiguecap01, rangerhat01 in 00 to 13) |
+| Evolution | pirate_kit_01 | `halo-elite-pirate-kit01`; `halo-grunt-pirate-kit01`, `halo-jackal-pirate-kit01` (minors) |
+| | pirate_kit_02 | `halo-elite-pirate-kit02`; `halo-grunt-pirate-kit02`, `halo-jackal-pirate-kit02` (majors) |
+| | pirate_kit_03 | `halo-grunt-pirate-kit03`; `halo-elite-pirate-kit03`, `halo-jackal-pirate-kit03` (minors) |
+| | rebel_kit_01, _03 | `halo-jackal-rebel-kit01`, `-kit03`; `halo-elite-`, `halo-grunt-rebel-kit01`, `-kit03` (minors) |
+| | rebel_kit_02 | `halo-jackal-rebel-kit02`; `halo-elite-rebel-kit02`, `halo-grunt-rebel-kit02` (majors) |
+| | feral_warrior_kit_02 | `halo-grunt-feral-kit02`; `halo-elite-feral-kit02`, `halo-jackal-feral-kit02` (minors) |
+| | feral_warrior_kit_03 | `halo-grunt-feral-kit03`; `halo-elite-feral-kit03`, `halo-jackal-feral-kit03` (majors) |
+| | hats | `halo-hats-off` (beret01 in 21 to 30) |
+
+**Results (built 2026-10-30; the earlier combined Elite mod worked in Evolution).** Software
+renders of every built model in the bind pose and four poses driven by the template's bones (a stride with
+the arms down, forearms across the belly, a crouch with the head turned and the hands twisted) next to the
+original (fci-modsrc `mods\_check\<game>\char-<model>.png`): no tears, soles within 1 cm of the
+template's floor in the bind pose, textures in place through the redirected materials. Every rebuilt model
+keeps its template's version, bones, parts and physics tail; between all mod folders only the alternatives
+for one model share files. Heights: elite 1.94 m (spec-ops 2.03), Jackal 2.00, Grunt 1.82, Flood 1.82,
+Hunter 2.80. The Instincts models and the Trigen hold +-1 m around the pelvis at 1/32767 and get 2/32767 when
+the creature is taller (Elite, Jackal); the pirates', rebels' and feral warriors' own 0.002 holds +-65 m.
+Hit capsules and ragdoll stay the template's (human, or the Chucker's).
 
 ## Open
 
