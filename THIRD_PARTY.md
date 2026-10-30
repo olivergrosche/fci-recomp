@@ -8,6 +8,7 @@ following components, each under its own license.
 | Component | Where | License | Copyright |
 |---|---|---|---|
 | [Xbox XBE Recomp](https://github.com/TGP482/Xbox-XBERecomp) at 65e959d4: Direct3D 8 and DirectSound layers, Direct3D 12 renderer | `src/xbr` (vendored, with changes marked `FCI`) | MIT, [src/xbr/LICENSE](src/xbr/LICENSE) | 2026 TGP482 |
+| [Dear ImGui](https://github.com/ocornut/imgui) 1.91.9b: the core and the Win32 and Direct3D 12 backends | `src/xbr/imgui` (vendored; `imconfig.h` sets one option, marked `FCI`) | MIT, [src/xbr/imgui/LICENSE.txt](src/xbr/imgui/LICENSE.txt) | 2014-2025 Omar Cornut |
 | Patches to [xboxrecomp](https://github.com/sp00nznet/xboxrecomp) | `patches/` | MIT, except the parts that change xemu's LGPL files, which are LGPL-2.1-or-later ([patches/README.md](patches/README.md)) | this project |
 
 `tools/sigmatch.py` reimplements Xbox XBE Recomp's signature matcher (`tools/symbols/main.cpp`, MIT).

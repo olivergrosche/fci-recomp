@@ -485,7 +485,7 @@ def compile_groups(group, inputs, work, obj, base, inc, winrt, dumpbin, record):
         # Xbox XBE Recomp's D3D8 and DirectSound layers and the Direct3D 12 renderer (src/xbr), with the
         # addresses tools/sigmatch.py found in this image (inputs/xbr-symbols/image_symbols.h)
         xbr = inputs / "host" / "xbr"
-        inc_xbr = [xbr, inputs / "xbr-symbols"] + inc + [winrt]
+        inc_xbr = [xbr, xbr / "imgui", inputs / "xbr-symbols"] + inc + [winrt]  # imgui/: Dear ImGui, vendored
         for cpp in sorted(xbr.rglob("*.cpp")):
             groups.append(
                 (

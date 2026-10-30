@@ -55,7 +55,10 @@ int fci_aspect_wide(void);                        // fci_display.c: RECOMP_FCI_A
 int fci_window_size(uint32_t* w, uint32_t* h);    // fci_display.c: RECOMP_FCI_WINDOW
 void fci_log_session_end(void);                   // fci_config.c: a clean exit, for the log
 extern const char *fci_xbe_path, *fci_game_dir;   // fci_main.c: from the arguments or fci.ini
+int fci_overlay_open(void);                       // fci_overlay.cpp: the mod menu
 }
+bool fci_overlay_message(HWND w, UINT msg, WPARAM wp, LPARAM lp, LRESULT* result);   // fci_overlay.cpp
+void fci_overlay_draw(double fps);
 
 namespace {
 thread_local bool t_host_thread = false;   // StartHostThread: guest calls take the guest CPU
@@ -418,6 +421,11 @@ bool InFront(HWND w) { return GetForegroundWindow() == GetAncestor(w, GA_ROOT); 
 
 LRESULT CALLBACK WindowProc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
 {
+    LRESULT taken;
+    if (fci_overlay_message(w, msg, wp, lp, &taken))   // the mod menu first (F1)
+        return taken;
+    if (fci_overlay_open() && fci_input_captured())
+        Capture(w, false);   // the menu has the mouse; a click captures again after it
     switch (msg) {
     case WM_KEYDOWN:
     case WM_KEYUP:
@@ -510,7 +518,7 @@ LRESULT CALLBACK WindowProc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
 }
 }   // namespace
 
-const GameInfo kGame{nullptr};
+const GameInfo kGame{fci_overlay_draw};   // the mod menu (fci_overlay.cpp)
 
 // Graphics options (fci_gfx.h) are read again when they change. RECOMP_FCI_XBR_NO_PRESENT_WAIT=1 (tests)
 // drops a frame the compositor cannot take now: with the display asleep it would wait hundreds of ms.

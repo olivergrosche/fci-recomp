@@ -14,6 +14,8 @@ draws through Direct3D 12 and plays through XAudio2.
 | `cpu/x86_ops.h`, `kernel/`, `app/` | this project: the parts of the upstream headers the vendored code uses, implemented on this runtime |
 | `fci_xbr_glue.cpp` | this project: guest calls, memory, kernel events, host threads, the window, logging, options |
 | `fci_enhance.cpp`, `fci_gfx.h` | this project: rendering enhancements (a `gpu::Extension`) and the graphics options |
+| `fci_overlay.cpp` | this project: the mod menu, drawn with Dear ImGui over the game (`../fci_mods.c` holds the mods) |
+| `imgui/` | [Dear ImGui](https://github.com/ocornut/imgui) 1.91.9b, the files the renderer and the menu use (MIT, `imgui/LICENSE.txt`); compiled with the folder, `imgui/` on the include path |
 
 `image_symbols.h`, the addresses `tools/sigmatch.py` finds in the game's executable, is generated during
 the build and never committed. Hand-verified addresses the signatures cannot find are in
@@ -36,7 +38,7 @@ Every change is marked `FCI` in the source.
 
 - `core/log.h`: no `format` attribute under MSVC.
 - `xdk/hle.h`: `GUEST_ORIG` names the renamed lifted body.
-- `gpu/d3d12.cpp`: Dear ImGui compiled out; render scale per axis; a 32 bit float depth buffer;
+- `gpu/d3d12.cpp`: Dear ImGui draws the mod menu (`fci_overlay_init` before its Direct3D 12 backend); render scale per axis; a 32 bit float depth buffer;
   visibility tests as occlusion queries; `Extension::Present`, a post-processed picture shown in place of
   the presented target; box filtering of a picture larger than the window; a lost device stops (99);
   diagnostics (`XBE_PROBE`, `XBE_CAPTURE_VS`, the debug layer's messages to the log with `XBE_D3D12_DEBUG`);

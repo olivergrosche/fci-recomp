@@ -1,0 +1,44 @@
+Subject: A host hook can put another file in place of one the title opens
+
+xbox_translate_path hands the finished host path of every guest path a drive or device rule matched
+to g_xbox_host_path_hook, which may rewrite it in place. fci-recomp's mods (src/fci_mods.c) point the
+game's archives at merged copies that hold the enabled mods' files, without touching the game's own.
+
+---
+diff --git a/src/kernel/kernel.h b/src/kernel/kernel.h
+--- a/src/kernel/kernel.h
++++ b/src/kernel/kernel.h
+@@ -566,6 +566,12 @@ BOOL xbox_translate_path(const char* xbox_path, xbox_host_char* host_path_buf, D
+  * do not. */
+ extern void (*g_xbox_path_hook)(const char *xbox_path);
+ 
++/* Optional: a project sets this to put another host file in place of one the
++ * title opens (fci-recomp's mods). Called with the finished host path of a
++ * guest path a drive or device rule matched, on the calling guest thread; it
++ * may rewrite the path in place, within buf_size characters. Win32 only. */
++extern void (*g_xbox_host_path_hook)(xbox_host_char *host_path, DWORD buf_size);
++
+ /* ============================================================================
+  * Pool Allocator (kernel_pool.c)
+  * ============================================================================ */
+diff --git a/src/kernel/kernel_path.c b/src/kernel/kernel_path.c
+--- a/src/kernel/kernel_path.c
++++ b/src/kernel/kernel_path.c
+@@ -20,6 +20,8 @@
+ /* A project may set this to watch every guest path the kernel translates (for
+  * example to print who opened a file). NULL by default. */
+ void (*g_xbox_path_hook)(const char *xbox_path) = NULL;
++/* And this to put another host file in place of a translated one (kernel.h). */
++void (*g_xbox_host_path_hook)(xbox_host_char *host_path, DWORD buf_size) = NULL;
+ 
+ /*
+  * Helper: check if an ANSI string starts with a prefix (case-insensitive).
+@@ -467,6 +469,8 @@ translate:
+                 host_path_buf[--n] = L'\0';
+         }
+ 
++        if (g_xbox_host_path_hook)
++            g_xbox_host_path_hook(host_path_buf, buf_size);
+         XBOX_TRACE(XBOX_LOG_PATH, "%s -> %S", xbox_path, host_path_buf);
+         xbox_remember_host_path(host_path_buf);
+         return TRUE;

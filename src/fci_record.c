@@ -25,6 +25,7 @@ int fci_player_position(float xyz[3]);                                          
 
 uint32_t fci_game_view(void);                       /* fci_threads.c */
 void fci_input_pad_stick(int pad, uint8_t *report); /* fci_input.c: the right stick, when it aims directly */
+void fci_overlay_pad(int pad, uint8_t *report);     /* xbr/fci_overlay.cpp: the mod menu */
 
 /* the id of the entity the game view controls (Camera_BuildViews, re/notes/INPUT-CAMERA.md) and the player's
  * own entity's id; the same in both games (re/notes/FRAME-RATE.md) */
@@ -227,6 +228,7 @@ static void replay_report(int pad, uint8_t *report)
 /* usb_gamepad_report's finished report (runtime patch 0021) */
 void fci_pad_report(int pad, uint8_t *report)
 {
+    fci_overlay_pad(pad, report); /* the mod menu: both sticks open it, and while it is open the game waits */
     static uint8_t last[PADS][REPORT];
     static double last_state = -1e9;
     int m = active();

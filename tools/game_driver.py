@@ -13,6 +13,9 @@ as long as the game does and no longer.
   mouse:<dx>:<dy>       mouse motion in counts, as if captured (on foot: dx * 0.05 degrees of turn)
   set:<KEY>=<value>     change a graphics option now (RECOMP_FCI_XBR_*, src/xbr/fci_gfx.h)
   capture               the next presented frame, under capture/
+  key:<key>[:<ms>]      a key pressed in the game's window (f1 ... f12, esc, enter, space, or a hex virtual key)
+  grab                  the game's window as shown, the mod menu included (a capture is the game's frame
+                        alone), as grab/NN.png
   dump:<name>           guest RAM now, memdump-<name>.bin
 
   python -B tools/game_driver.py <name> [--editor] [--save <fixture>] [--opt RECOMP_X=v ...] <step> ...
@@ -274,6 +277,11 @@ class Game:
             ):
                 time.sleep(0.1)
             time.sleep(1.1)  # capture folders are named by the second
+        elif kind == "grab":
+            self.grab()
+        elif kind == "key":
+            name, _, ms = arg.partition(":")
+            self.key(name, int(ms or 100))
         elif kind == "dump":
             with open(self.control, "a") as f:
                 f.write(f"dump {arg}\n")
@@ -287,6 +295,39 @@ class Game:
 
     def frames(self):
         return sorted((self.folder / "capture").glob("*/final.bmp"))
+
+    def window(self):
+        """the visible frame window of this run's game (a relaunch makes a new one)"""
+        import regress
+
+        for frame, kids in regress.frames_and_children():
+            pid = regress.window_pid(frame)
+            if regress.user32.IsWindowVisible(frame) and Path(process_path(pid)).parent == GAME_EXE.parent:
+                return frame, kids
+        raise StepFailed("no visible game window")
+
+    def key(self, name, ms):
+        """WM_KEYDOWN and WM_KEYUP posted to the game's render window: no focus needed"""
+        import regress
+
+        names = {"esc": 0x1B, "enter": 0x0D, "space": 0x20, **{f"f{i}": 0x6F + i for i in range(1, 13)}}
+        vk = names.get(name.lower()) or int(name, 16)
+        _, kids = self.window()
+        target = kids[0] if kids else self.window()[0]
+        scan = regress.user32.MapVirtualKeyW(vk, 0)
+        regress.user32.PostMessageW(target, 0x0100, vk, 1 | scan << 16)
+        time.sleep(ms / 1000)
+        regress.user32.PostMessageW(target, 0x0101, vk, 1 | scan << 16 | 0xC0000000)
+        time.sleep(0.2)
+
+    def grab(self):
+        """PrintWindow of the visible game window of this run (any instance: a relaunch makes a new one)"""
+        import regress
+
+        out = self.folder / "grab"
+        out.mkdir(exist_ok=True)
+        if not regress.grab(self.window()[0], out / f"{len(list(out.iterdir())):02d}.png"):
+            raise StepFailed("grab: the game's window has no size")
 
 
 def run(name, steps, **kw):

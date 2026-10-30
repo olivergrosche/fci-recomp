@@ -99,6 +99,29 @@ found next to the game executable. For more information on what each setting doe
 included in the ini. To change a setting, remove the preceding semicolon `;` from a line and change values
 to your desired settings. Save and relaunch the game.
 
+## Mods
+
+A mod is a folder in `mods` next to the game executable that holds files in place of files in the game's
+archives, under the archive's name: `mods\<mod>\weaponpack\animations\weapons\first\mp5n\mp5n_first.xbg`
+replaces that model in `game\weaponpack.dat`, and `mods\<mod>\levels\21_DUNEA\21_dunea\...` a file in that
+level's archive. A `mod.ini` beside them names it:
+
+```ini
+name = MA5B assault rifle instead of the MP5
+group = Halo
+description = What it changes.
+credit = Who made what, under which license.
+```
+
+In the game, F1 or both sticks pressed together open the mod menu, which switches mods on and off (two mods
+that replace the same file are one or the other). The game keeps running underneath, without input, so
+pause it first. A choice takes effect when the game next opens its archives: at a level change or after
+Quit to Main Menu. The game folder itself is never changed: the archives the switched-on mods touch are
+merged into `mods\.cache` and read from there. The choice is kept in `mods\enabled.txt`.
+
+`tools/weapon_import.py` turns a glTF model into a weapon's files (re/notes/MODELS.md); `tools/dat2.py` and
+`tools/xbt.py` take the archives and textures apart.
+
 ## Known issues
 
 - Crashes may rarely occur during single player mode or elsewhere. Please report any crash and include your crash log to help improve the project.

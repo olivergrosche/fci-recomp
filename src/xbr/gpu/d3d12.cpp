@@ -25,13 +25,14 @@
 #include <unordered_map>
 #include <unordered_set>
 
-#ifndef FCI_XBR_IMGUI  // FCI: no settings overlay, so no Dear ImGui
-#define FCI_XBR_IMGUI 0
+#ifndef FCI_XBR_IMGUI  // FCI: Dear ImGui (vendored in imgui/) draws the mod menu, fci_overlay.cpp
+#define FCI_XBR_IMGUI 1
 #endif
 #if FCI_XBR_IMGUI
 #include <imgui.h>
 #include <backends/imgui_impl_dx12.h>
 #include <backends/imgui_impl_win32.h>
+void fci_overlay_init(HWND hwnd);  // FCI: the context, font and window input for the menu
 #endif
 
 #include "app/app.h"
@@ -871,6 +872,7 @@ bool D3D12Backend::Init(uint32_t width, uint32_t height) {
     CreateGammaLut();
     LoadShaderCache();
 #if FCI_XBR_IMGUI
+    fci_overlay_init(hwnd);  // FCI
     ImGui_ImplDX12_Init(dev_.Get(), kFrames, DXGI_FORMAT_B8G8R8A8_UNORM, ui_heap_.Get(),
                         ui_heap_->GetCPUDescriptorHandleForHeapStart(), ui_heap_->GetGPUDescriptorHandleForHeapStart());
 #endif

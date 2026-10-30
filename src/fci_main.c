@@ -12,6 +12,7 @@
 #include "recomp_types.h"
 
 #include "fci_image.h"
+#include "fci_mods.h"
 
 extern void xbe_entry_point(void);
 extern void xbox_path_init(const char *game_dir, const char *save_dir);
@@ -310,6 +311,7 @@ int main(int argc, char **argv)
     /* every PsCreateSystemThreadEx creates a real host thread; the entry's own thread returns */
     xbox_SetThreadMode(XBOX_THREAD_MODE_SPAWN);
     xbox_path_init(argv[2], argv[3]);
+    fci_mods_init(argv[2]); /* the enabled mods' archives in place of the game's (fci_mods.c) */
     fci_disk_init(argv[3]);
     xbox_kernel_bridge_init();
     { /* XeImageFileName names the image compiled into this process */
