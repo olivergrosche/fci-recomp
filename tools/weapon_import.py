@@ -17,18 +17,50 @@ The config (paths relative to it):
     "anchor": {"source": [-41.3, 0, -34.4], "target": [0.077, 0.034, 0.0]},
     "drop": [[[-101, -6, -37], [-77, 6, 18]]],  boxes: pieces entirely inside are left out
     "parts": {"b_Magazine": [[[...], [...]]]},  boxes: pieces entirely inside hang on that bone
-    "texture": {"size": 1024, "gloss": [120, 225]},
+    "texture": {"size": 1024, "gloss": [120, 225], "gain": 1.0},
     "out": "out"
   }
 
 Positions in anchor, drop and parts are glTF units with the axes already turned (X the muzzle, Z up), as
-`info` prints them. A piece is a connected part of the mesh; pieces in no box hang on the root bone, and
-a bone that gets no piece gets one tiny triangle, out of sight. The materials go into one atlas: base
+`info` prints them. A piece is a connected part of the mesh; pieces in no box hang on the weapon's frame
+(the bone of its largest submesh, or "frame": "<bone>"), and a bone that gets no piece gets one tiny
+triangle, out of sight. The materials go into one atlas: base
 colour plus emission as the diffuse map, (1 - roughness) as its alpha (the games' gloss), the normal maps
 with green along +v as the games' (DirectX style): a glTF's point it along -v by the standard and are
 flipped, unless "texture": {"normal_y": "down"} says the model's maps are DirectX style already.
+"gain" brightens the base colour (Halo's maps are made for an engine that multiplies them with the light: about
+1.8 for its UNSC weapons). Materials with the same maps share their square of the atlas; a material whose
+texture coordinates span several repeats of its texture gets them tiled in its square (at most 4 a side).
 
-  python -B tools/weapon_import.py info <config.json>     the pieces, their sizes and boxes
+More keys:
+
+    "models": [{"model": "...first.xbg", "texture": {"size": 1024}}, {"model": "...3rd.xbg", ...}]
+                                                several models from one config; an entry may also give its own
+                                                source, axes, rotate, scale, anchor, drop, parts, keep, frame,
+                                                position_scale, drop_materials, double_sided (a third-person
+                                                model from a world model, a model turned another way)
+    "rotate": [0, 26, 0]                        degrees about the game's X, Y, Z (in that order), about the
+                                                anchor, after the axes
+    "drop": ["frame bullet", [[...], [...]]]    an entry is a box or the name of a glTF node (all of its
+    "parts": {"b_Magazine": ["frame magazine"]} triangles, whatever pieces they touch); so in parts
+    "keep": ["b_Shell"]                         bones that keep the template's own geometry (a part with
+                                                textures of its own, such as a shotgun shell)
+    "drop_materials": ["gauge"]                 glTF materials (by name) left out
+    "double_sided": ["blade"]                   glTF materials (by name) drawn from both sides: the games
+                                                draw one, so their triangles get a back
+    "materials": {"needles": {"color": [230, 60, 200]}, "decal": {"under": [200, 180, 90]}}
+                                                a material's diffuse as one flat colour; or its base map laid
+                                                over a flat colour by its alpha (a cut-out decal: the games
+                                                draw it opaque)
+    "position_scale": "fit"                     metres per int16 step: the finest power-of-two multiple of
+                                                1/32767 that holds the model (default: the template's)
+
+The new geometry and its two textures go to the material of the template's largest submesh: each bone's
+geometry into its submesh with that material's textures; the bone's other submeshes (scope glass, a
+suppressor, a shell with a texture of its own) get the tiny triangle and their textures stay as they are,
+as they may be another model's too.
+
+  python -B tools/weapon_import.py info <config.json>     the pieces, their sizes, boxes and glTF nodes
 """
 
 import argparse
@@ -51,6 +83,7 @@ WIDTH = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4, "MAT4": 16}
 DXT1, DXT5 = 0x10, 0x12
 PAD = 4  # texels around each material's square in the atlas, against bleeding
 PLACEHOLDER = 0.0005  # metres: the triangle of a bone without a piece
+MAX_TILES = 4  # repeats of a texture per side in its square of the atlas
 
 
 # --- glTF -------------------------------------------------------------------------------------------
@@ -114,6 +147,7 @@ class Gltf:
                 tris = [tuple(idx[k : k + 3]) for k in range(0, len(idx) - 2, 3)]
                 out.append(
                     {
+                        "node": node.get("name", f"node {i}"),
                         "pos": pos,
                         "normal": nrm,
                         "tangent": tan,
@@ -255,12 +289,74 @@ def inside(box, lo, hi):
     return all(box[0][k] <= lo[k] and hi[k] <= box[1][k] for k in range(3))
 
 
+def selects(entry, prim, lo, hi):
+    """a drop or parts entry: a glTF node's name, or a box the piece (lo .. hi) lies inside"""
+    return prim["node"].lower() == entry.lower() if isinstance(entry, str) else inside(entry, lo, hi)
+
+
+def material_name(gltf, material):
+    return gltf.g["materials"][material].get("name", "") if "materials" in gltf.g else ""
+
+
+def back_faces(p):
+    """a primitive's back: the triangles turned around, the normals reversed (the games draw one side)"""
+    q = dict(p)
+    q["normal"] = [tuple(-c for c in n) for n in p["normal"]]
+    if p["tangent"]:
+        q["tangent"] = [t[:3] + (-t[3],) for t in p["tangent"]]
+    q["tris"] = [(a, c, b) for a, b, c in p["tris"]]
+    return q
+
+
+def rotation(degrees):
+    """the rotation by (x, y, z) degrees about the game's X, then Y, then Z"""
+    m = IDENTITY3
+    for axis, d in enumerate(degrees):
+        c, s = math.cos(math.radians(d)), math.sin(math.radians(d))
+        i, j = (axis + 1) % 3, (axis + 2) % 3  # right-handed: a positive angle turns i towards j
+        r = [[float(a == b) for b in range(3)] for a in range(3)]
+        r[i][i], r[i][j], r[j][i], r[j][j] = c, -s, s, c
+        m = xbg.mat_mul(tuple(map(tuple, r)), m)
+    return m
+
+
+IDENTITY3 = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+
+
+def source(cfg, base):
+    """the config's glTF in the game's axes: primitives (without the dropped materials), each triangle's
+    piece, the pieces' boxes and each vertex's (tangent, binormal)"""
+    gltf = Gltf(base / cfg["source"])
+    leave = {m.lower() for m in cfg.get("drop_materials", ())}
+    prims = [
+        p for p in turned(gltf.primitives(), cfg["axes"]) if material_name(gltf, p["material"]).lower() not in leave
+    ]
+    both = {m.lower() for m in cfg.get("double_sided", ())}
+    prims += [back_faces(p) for p in prims if material_name(gltf, p["material"]).lower() in both]
+    piece = pieces(prims)
+    boxes = piece_boxes(prims, piece)
+    stats = [0, 0]
+    fr = [frames(p, stats) for p in prims]
+    repeated = {m: r for m, r in tiles(prims).items() if r != (0, 0, 1, 1)}
+    print(
+        f"{cfg['source']}: {sum(len(p['tris']) for p in prims)} triangles in {len(boxes)} pieces; the glTF's "
+        f"bitangents point along -v at {stats[0]} of {stats[1]} vertices (the binormals written all do)"
+        + "".join(
+            f"; {material_name(gltf, m)!r} spans {a} x {d} repeats of its texture from ({u}, {v})"
+            for m, (u, v, a, d) in repeated.items()
+        )
+    )
+    return gltf, prims, piece, boxes, fr
+
+
 # --- textures -----------------------------------------------------------------------------------------
 
 
-def material_maps(gltf, material, cell, flip_green):
+def material_maps(gltf, material, cell, flip_green, gain=1.0, override=None):
     """(diffuse RGB, smoothness L, normal RGB with green along +v as the games') of a material, each
-    cell x cell"""
+    cell x cell; override {"color": (r, g, b)} in place of its base colour and emission, {"under": (r, g, b)}
+    beneath its base map by its alpha"""
+    override = override or {}
     m = gltf.g["materials"][material] if "materials" in gltf.g else {}
     pbr = m.get("pbrMetallicRoughness", {})
 
@@ -270,9 +366,18 @@ def material_maps(gltf, material, cell, flip_green):
         return gltf.image(texture).convert(mode).resize((cell, cell), Image.LANCZOS)
 
     factor = pbr.get("baseColorFactor", (1, 1, 1, 1))
-    base = load(pbr.get("baseColorTexture"), "RGB", (255, 255, 255))
+    if "under" in override:  # a cut-out over a flat colour
+        cut = load(pbr.get("baseColorTexture"), "RGBA", (255, 255, 255, 255))
+        under = Image.new("RGB", cut.size, tuple(override["under"]))
+        base = Image.composite(cut.convert("RGB"), under, cut.getchannel("A"))
+    else:
+        base = load(pbr.get("baseColorTexture"), "RGB", (255, 255, 255))
     base = ImageChops.multiply(base, Image.new("RGB", base.size, tuple(round(255 * f) for f in factor[:3])))
-    if "emissiveTexture" in m or any(m.get("emissiveFactor", (0, 0, 0))):
+    if gain != 1.0:  # base maps made for an engine that brightens them (Halo's multiply with the light)
+        base = base.point(lambda v: min(255, round(v * gain)))
+    if "color" in override:
+        base = Image.new("RGB", (cell, cell), tuple(override["color"]))
+    elif "emissiveTexture" in m or any(m.get("emissiveFactor", (0, 0, 0))):
         glow = load(m.get("emissiveTexture"), "RGB", (255, 255, 255))
         ef = tuple(round(255 * f) for f in m.get("emissiveFactor", (1, 1, 1)))
         base = ImageChops.add(base, ImageChops.multiply(glow, Image.new("RGB", glow.size, ef)))
@@ -287,18 +392,61 @@ def material_maps(gltf, material, cell, flip_green):
     return base, ImageOps.invert(rough), normal
 
 
-def atlas(gltf, materials, size, gloss, flip_green):
-    """the diffuse (RGBA) and normal (RGB) atlases and each material's (u0, v0, scale) in it"""
-    side = math.ceil(math.sqrt(len(materials)))
+def same_maps(gltf, material, overrides):
+    """what makes a material's maps: materials alike share their square of the atlas"""
+    m = gltf.g["materials"][material] if "materials" in gltf.g else {}
+    keep = ("pbrMetallicRoughness", "emissiveTexture", "emissiveFactor", "normalTexture")
+    return json.dumps([{k: m.get(k) for k in keep}, overrides.get(m.get("name", "").lower())], sort_keys=True)
+
+
+def tiles(prims):
+    """per material, the whole texture repeats its texture coordinates span: (u from, v from, across, down);
+    a hundredth of a repeat over the edge does not count"""
+    span = {}
+    for p in prims:
+        for u, v in p["uv"]:
+            lo, hi = span.get(p["material"], ((math.inf, math.inf), (-math.inf, -math.inf)))
+            span[p["material"]] = ((min(lo[0], u), min(lo[1], v)), (max(hi[0], u), max(hi[1], v)))
+    out = {}
+    for mat, (lo, hi) in span.items():
+        first = [math.floor(c + 0.01) for c in lo]
+        count = [max(1, min(MAX_TILES, math.ceil(h - 0.01) - f)) for h, f in zip(hi, first)]
+        out[mat] = (*first, *count)
+    return out
+
+
+def tiled(im, across, down, cell):
+    if (across, down) == (1, 1):
+        return im
+    out = Image.new(im.mode, (im.width * across, im.height * down))
+    for i in range(across):
+        for j in range(down):
+            out.paste(im, (i * im.width, j * im.height))
+    return out.resize((cell, cell), Image.LANCZOS)
+
+
+def atlas(gltf, materials, size, gloss, flip_green, gain=1.0, overrides=None, repeats=None):
+    """the diffuse (RGBA) and normal (RGB) atlases and each material's (u0, v0, scale, u from, v from,
+    across, down) in it; overrides = {material name (lower case): material_maps override}, repeats = tiles()"""
+    overrides = overrides or {}
+    repeats = repeats or {}
+    squares = {}  # (same_maps key, repeats) -> the materials drawn from it
+    for mat in materials:
+        squares.setdefault((same_maps(gltf, mat, overrides), repeats.get(mat, (0, 0, 1, 1))), []).append(mat)
+    side = math.ceil(math.sqrt(len(squares)))
     cell = size // side
     pad = max(1, PAD * cell // 512)
     diffuse = Image.new("RGBA", (size, size), (0, 0, 0, gloss[0]))
     normal = Image.new("RGB", (size, size), (128, 128, 255))
     place = {}
     lo, hi = gloss
-    for k, mat in enumerate(materials):
+    for k, alike in enumerate(squares.values()):
+        mat = alike[0]
         x, y = (k % side) * cell, (k // side) * cell
-        base, smooth, nrm = material_maps(gltf, mat, cell, flip_green)
+        override = overrides.get(material_name(gltf, mat).lower())
+        base, smooth, nrm = material_maps(gltf, mat, cell, flip_green, gain, override)
+        first_u, first_v, across, down = repeats.get(mat, (0, 0, 1, 1))
+        base, smooth, nrm = (tiled(im, across, down, cell) for im in (base, smooth, nrm))
         alpha = smooth.point(lambda v: round(lo + (hi - lo) * v / 255))
         rgba = Image.merge("RGBA", (*base.split(), alpha))
         inner = cell - 2 * pad
@@ -307,7 +455,8 @@ def atlas(gltf, materials, size, gloss, flip_green):
         normal.paste(nrm, (x, y))
         diffuse.paste(rgba.resize((inner, inner), Image.LANCZOS), (x + pad, y + pad))
         normal.paste(nrm.resize((inner, inner), Image.LANCZOS), (x + pad, y + pad))
-        place[mat] = ((x + pad) / size, (y + pad) / size, inner / size)
+        for m in alike:
+            place[m] = ((x + pad) / size, (y + pad) / size, inner / size, first_u, first_v, across, down)
     return diffuse, normal, place
 
 
@@ -366,27 +515,70 @@ def frames(p, stats):
     return out
 
 
+PER_MODEL = (
+    "source",
+    "axes",
+    "rotate",
+    "scale",
+    "anchor",
+    "drop",
+    "parts",
+    "keep",
+    "frame",
+    "position_scale",
+    "drop_materials",
+    "double_sided",
+)
+
+
 def build(cfg, base):
-    gltf = Gltf(base / cfg["source"])
-    prims = turned(gltf.primitives(), cfg["axes"])
-    piece = pieces(prims)
-    boxes = piece_boxes(prims, piece)
-    stats = [0, 0]
-    fr = [frames(p, stats) for p in prims]
-    print(
-        f"{sum(len(p['tris']) for p in prims)} triangles in {len(boxes)} pieces; the glTF's bitangents point "
-        f"along -v at {stats[0]} of {stats[1]} vertices (the binormals written all do)"
-    )
     models = cfg.get("models") or [{"model": cfg["model"]}]
-    atlases = {}
+    sources, atlases = {}, {}
     for mc in models:
+        mcfg = {**cfg, **{k: mc[k] for k in PER_MODEL if k in mc}}
         tex = {**cfg.get("texture", {}), **mc.get("texture", {})}
         if tex.get("normal_y", "up") not in ("up", "down"):
             raise SystemExit('error: texture.normal_y is "up" (the glTF standard) or "down" (DirectX style)')
-        key = (tex.get("size", 1024), tuple(tex.get("gloss", (120, 225))), tex.get("normal_y", "up"))
+        skey = (
+            mcfg["source"],
+            tuple(mcfg["axes"]),
+            tuple(mcfg.get("drop_materials", ())),
+            tuple(mcfg.get("double_sided", ())),
+        )
+        if skey not in sources:
+            sources[skey] = source(mcfg, base)
+        gltf, prims = sources[skey][:2]
+        overrides = {k.lower(): v for k, v in cfg.get("materials", {}).items()}
+        key = (
+            skey,
+            tex.get("size", 1024),
+            tuple(tex.get("gloss", (120, 225))),
+            tex.get("normal_y", "up"),
+            tex.get("gain", 1.0),
+        )
         if key not in atlases:
-            atlases[key] = atlas(gltf, sorted({p["material"] for p in prims}), key[0], key[1], key[2] == "up")
-        build_model(cfg, mc["model"], base, prims, piece, boxes, fr, atlases[key])
+            materials = sorted({p["material"] for p in prims})
+            atlases[key] = atlas(gltf, materials, key[1], key[2], key[3] == "up", key[4], overrides, tiles(prims))
+        build_model(mcfg, mc["model"], base, *sources[skey][1:], atlases[key])
+
+
+def placeholder(verts, tris):
+    """one tiny triangle at the bone, out of sight"""
+    for q in ((0, 0, 0), (PLACEHOLDER, 0, 0), (0, 0, PLACEHOLDER)):
+        verts.append({"pos": q, "uv": (0.5, 0.5), "normal": (0, -1, 0), "tangent": (1, 0, 0), "binormal": (0, 0, 1)})
+    tris.append((len(verts) - 3, len(verts) - 2, len(verts) - 1))
+
+
+def position_scale(setting, meshes):
+    """None (the template's), a number, or "fit": the finest power-of-two multiple of 1/32767 that holds
+    every vertex"""
+    if setting != "fit":
+        return setting
+    top = max((abs(c) for verts, _ in meshes for v in verts for c in v["pos"]), default=0.0)
+    k = 1
+    while top * 32767 / k > 32767:
+        k *= 2
+    return k / 32767
 
 
 def build_model(cfg, name, base, prims, piece, boxes, fr, maps):
@@ -396,66 +588,109 @@ def build_model(cfg, name, base, prims, piece, boxes, fr, maps):
     template = (folder / name).read_bytes()
     model = xbg.Model(template)
     names = [b.name.lower() for b in model.bones]
+    for bone in [*cfg.get("parts", {}), *([cfg["frame"]] if "frame" in cfg else [])]:
+        if bone.lower() not in names:
+            print(f"  note: {name} has no bone {bone!r}; its pieces stay on the frame")
+
+    # the weapon's material (its largest submesh's): each bone's geometry goes into its submesh with it
+    def maps_of(sm):
+        m = model.materials[sm.material] if sm.material < len(model.materials) else None
+        return (m.diffuse, m.bump) if m else (None, None)
+
+    def size(sm):
+        return len(xbg.strip_triangles(sm.strip))
+
+    largest = max(model.submeshes, key=size)
+    material = maps_of(largest)
+    frame = names.index(cfg["frame"].lower()) if cfg.get("frame", "").lower() in names else model.part_of(largest).bone
+    target = {}  # bone -> the submesh its geometry goes into
+    for sm in model.submeshes:
+        bone = model.part_of(sm).bone
+        if maps_of(sm) == material and (bone not in target or size(sm) > size(model.submeshes[target[bone]])):
+            target[bone] = sm.index
+
+    keep = {names.index(b.lower()) for b in cfg.get("keep", ()) if b.lower() in names}
     drop = cfg.get("drop", [])
-    owner = {}  # piece -> bone, None when left out
-    for n, (lo, hi, _) in boxes.items():
-        owner[n] = None if any(inside(box, lo, hi) for box in drop) else 0
-        for bone, bone_boxes in cfg.get("parts", {}).items():  # bones this model lacks stay on the root
-            if owner[n] is not None and bone.lower() in names and any(inside(b, lo, hi) for b in bone_boxes):
-                owner[n] = names.index(bone.lower())
+    parts = [(names.index(b.lower()), entries) for b, entries in cfg.get("parts", {}).items() if b.lower() in names]
+    owner = {}  # (primitive, piece) -> bone, None when left out
+
+    def owner_of(k, n):
+        if (k, n) not in owner:
+            lo, hi, _ = boxes[n]
+            bone = None if any(selects(e, prims[k], lo, hi) for e in drop) else frame
+            for b, entries in parts:
+                if bone is not None and any(selects(e, prims[k], lo, hi) for e in entries):
+                    bone = b
+            if bone is not None and bone not in target:
+                raise SystemExit(f"error: {name}: bone {model.bones[bone].name} has no submesh with the weapon's maps")
+            owner[(k, n)] = bone
+        return owner[(k, n)]
+
     scale = cfg["scale"]
     src, dst = cfg["anchor"]["source"], cfg["anchor"]["target"]
-    offset = tuple(d - s * scale for s, d in zip(src, dst))
+    turn = rotation(cfg.get("rotate", (0, 0, 0)))  # about the anchor
 
-    # each submesh: its part's bone, then its vertices (in the bone's frame) and triangles
-    bone_of = {sm.vertex_offset: model.part_of(sm).bone for sm in model.submeshes}
-    meshes = {bone: ([], []) for bone in bone_of.values()}
-    frame = {bone: model.bone_matrix(bone) for bone in meshes}
+    # each submesh: its vertices (in its bone's frame) and triangles
+    meshes = {sm.index: ([], []) for sm in model.submeshes}
+    frame_of = {bone: model.bone_matrix(bone) for bone in target}
     dropped = 0
-    for p, ids, f in zip(prims, piece, fr):
-        u0, v0, s = place[p["material"]]
+    for k, (p, ids, f) in enumerate(zip(prims, piece, fr)):
+        u0, v0, s, fu, fv, nu, nv = place[p["material"]]
         remap = {}
         for tri, n in zip(p["tris"], ids):
-            bone = owner[n]
+            bone = owner_of(k, n)
             if bone is None:
                 dropped += 1
                 continue
-            verts, tris = meshes[bone]
-            rot, pos = frame[bone]
+            verts, tris = meshes[target[bone]]
+            rot, pos = frame_of[bone]
             back = transpose(rot)
+            dirs = xbg.mat_mul(back, turn)
             out = []
             for i in tri:
                 if (bone, i) not in remap:
-                    world = tuple(c * scale + o for c, o in zip(p["pos"][i], offset))
+                    world = xbg.add(dst, xbg.mat_vec(turn, tuple((c - s) * scale for c, s in zip(p["pos"][i], src))))
                     u, v = p["uv"][i]
                     verts.append(
                         {
                             "pos": xbg.mat_vec(back, sub(world, pos)),
-                            "uv": (u0 + min(max(u, 0.0), 1.0) * s, v0 + min(max(v, 0.0), 1.0) * s),
-                            "normal": xbg.mat_vec(back, p["normal"][i]),
-                            "tangent": xbg.mat_vec(back, f[i][0]),
-                            "binormal": xbg.mat_vec(back, f[i][1]),
+                            "uv": (
+                                u0 + min(max((u - fu) / nu, 0.0), 1.0) * s,
+                                v0 + min(max((v - fv) / nv, 0.0), 1.0) * s,
+                            ),
+                            "normal": xbg.mat_vec(dirs, p["normal"][i]),
+                            "tangent": xbg.mat_vec(dirs, f[i][0]),
+                            "binormal": xbg.mat_vec(dirs, f[i][1]),
                         }
                     )
                     remap[(bone, i)] = len(verts) - 1
                 out.append(remap[(bone, i)])
             a, b, c = out
             tris.append((a, c, b))  # the games' front faces turn the other way
-    for verts, tris in meshes.values():
-        if not tris:  # a bone without a piece: one tiny triangle at the bone, out of sight
-            for q in ((0, 0, 0), (PLACEHOLDER, 0, 0), (0, 0, PLACEHOLDER)):
-                verts.append(
-                    {"pos": q, "uv": (0.5, 0.5), "normal": (0, -1, 0), "tangent": (1, 0, 0), "binormal": (0, 0, 1)}
-                )
-            tris.append((0, 1, 2))
-    rebuilt = xbg.rebuild(template, [meshes[bone_of[sm.vertex_offset]] for sm in model.submeshes])
+    for sm in model.submeshes:
+        verts, tris = meshes[sm.index]
+        if model.part_of(sm).bone in keep:
+            if tris:
+                raise SystemExit(f"error: {name}: pieces on {model.bones[model.part_of(sm).bone].name}, a kept bone")
+            if maps_of(sm) == material:
+                raise SystemExit(f"error: {name}: {model.bones[model.part_of(sm).bone].name} has the weapon's maps")
+            verts += sm.vertices
+            tris += xbg.strip_triangles(sm.strip)
+        elif not tris:  # a bone without a piece, a submesh with other maps
+            placeholder(verts, tris)
+    ordered = [meshes[sm.index] for sm in model.submeshes]
+    rebuilt = xbg.rebuild(template, ordered, position_scale(cfg.get("position_scale"), ordered))
 
     out = base / cfg["out"]
-    target = out / name
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(rebuilt)
-    for path in (t.lstrip("\\").replace("\\", "/").lower() for t in model.textures):
-        is_normal = path.endswith("_nt.xbt")
+    target_file = out / name
+    target_file.parent.mkdir(parents=True, exist_ok=True)
+    target_file.write_bytes(rebuilt)
+    paths = [t.lstrip("\\").replace("\\", "/").lower() for t in model.textures]
+    if material == (None, None):  # no maps named: every texture, a normal map by its name
+        written = [(path, path.endswith("_nt.xbt")) for path in paths]
+    else:
+        written = [(paths[t], t == material[1]) for t in material if t is not None]
+    for path, is_normal in written:
         old = folder / path
         fmt = DXT1 if is_normal or (old.exists() and xbt.header(old.read_bytes())[3] == DXT1) else DXT5
         data = dxt_xbt(normal if is_normal else diffuse, fmt)
@@ -463,7 +698,10 @@ def build_model(cfg, name, base, prims, piece, boxes, fr, maps):
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_bytes(data)
     new = xbg.Model(rebuilt)
-    print(f"{name}: {dropped} triangles left out")
+    kept = sorted(set(paths) - {path for path, _ in written})
+    print(f"{name}: {dropped} triangles left out, position scale {new.scale:.6g}")
+    if kept:
+        print(f"  textures kept as they are: {', '.join(kept)}")
     for sm in new.submeshes:
         print(
             f"  {model.bones[new.part_of(sm).bone].name}: {len(sm.vertices)} vertices, "
@@ -476,20 +714,24 @@ def transpose(m):
 
 
 def info(cfg, base):
-    prims = turned(Gltf(base / cfg["source"]).primitives(), cfg["axes"])
-    boxes = piece_boxes(prims, pieces(prims))
+    _, prims, piece, boxes, _ = source(cfg, base)
     lo = [min(b[0][k] for b in boxes.values()) for k in range(3)]
     hi = [max(b[1][k] for b in boxes.values()) for k in range(3)]
-    print(
-        f"{sum(len(p['tris']) for p in prims)} triangles in {len(boxes)} pieces, "
-        f"box {fmt3(lo)} .. {fmt3(hi)} (axes turned, glTF units)"
-    )
+    digits = max(1, 3 - math.floor(math.log10(max(max(b - a for a, b in zip(lo, hi)), 1e-9))))
+    nodes = {}
+    for p, ids in zip(prims, piece):
+        for n in ids:
+            nodes.setdefault(n, set()).add(p["node"])
+    print(f"box {fmt3(lo, digits)} .. {fmt3(hi, digits)} (axes turned, glTF units)")
     for n, (lo, hi, count) in sorted(boxes.items(), key=lambda kv: -kv[1][2]):
-        print(f"  piece {n:3d}: {count:6d} triangles, {fmt3(lo)} .. {fmt3(hi)}")
+        print(
+            f"  piece {n:3d}: {count:6d} triangles, {fmt3(lo, digits)} .. {fmt3(hi, digits)}"
+            f"  {', '.join(sorted(nodes[n]))}"
+        )
 
 
-def fmt3(v):
-    return "(" + ", ".join(f"{c:.1f}" for c in v) + ")"
+def fmt3(v, digits=1):
+    return "(" + ", ".join(f"{c:.{digits}f}" for c in v) + ")"
 
 
 def main():
