@@ -31,6 +31,8 @@ void SetPresentInterval(uint32_t interval);
 
 struct GameInfo {
     void (*ui)(double fps);
+    // FCI: the UI shows something now; frame replay's presenter draws no UI, so such frames are shown as drawn
+    bool (*ui_shown)();
 };
 extern const GameInfo kGame;
 

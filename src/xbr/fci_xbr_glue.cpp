@@ -518,7 +518,11 @@ LRESULT CALLBACK WindowProc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
 }
 }   // namespace
 
-const GameInfo kGame{fci_overlay_draw};   // the mod menu (fci_overlay.cpp)
+namespace {
+bool OverlayShown() { return fci_overlay_open() != 0; }
+}   // namespace
+
+const GameInfo kGame{fci_overlay_draw, OverlayShown};   // the mod menu (fci_overlay.cpp)
 
 // Graphics options (fci_gfx.h) are read again when they change. RECOMP_FCI_XBR_NO_PRESENT_WAIT=1 (tests)
 // drops a frame the compositor cannot take now: with the display asleep it would wait hundreds of ms.

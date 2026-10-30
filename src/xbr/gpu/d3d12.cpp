@@ -4020,12 +4020,14 @@ void D3D12Backend::Present(const Surface& front) {
     Transition(lut_.Get(), lut_state_, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
     // FCI: frame replay: a frame drawn in one list goes to the presenter thread, which shows it, then replays it
-    // blended until the next; any other frame is shown here as before
+    // blended until the next; any other frame is shown here as before, and so is every frame while the UI (the mod
+    // menu) shows something: the presenter draws no UI
     bool handed = false;
     if (replay_period_ > 0) {
         MatchDraws();
+        bool ui = app::kGame.ui_shown && app::kGame.ui_shown();
         std::lock_guard kept_lock(kept_lock_);
-        KeepFrame(t);
+        KeepFrame(ui ? nullptr : t);
         handed = kept_.list != nullptr;
     }
     track_ = nullptr;
