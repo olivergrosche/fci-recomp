@@ -66,6 +66,14 @@ bool Pressed(const uint8_t* r)
     return (r[2] & kThumbs) != 0;
 }
 
+// a dimmed line that wraps at the window's edge (TextDisabled does not)
+void DimWrapped(const char* text)
+{
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    ImGui::TextWrapped("%s", text);
+    ImGui::PopStyleColor();
+}
+
 const char* State(int i)
 {
     bool on = fci_mods_enabled(i), active = fci_mods_active(i);
@@ -141,10 +149,9 @@ void DrawMenu()
                     if (fci_mods_conflict(i, j))
                         others += (others.empty() ? "" : ", ") + std::string(fci_mods_name(j));
                 if (!others.empty())
-                    ImGui::TextDisabled("Replaces the same files as %s: one of them at a time.",
-                                        others.c_str());
+                    DimWrapped(("Replaces the same files as " + others + ": one of them at a time.").c_str());
                 if (*fci_mods_credit(i))
-                    ImGui::TextDisabled("%s", fci_mods_credit(i));
+                    DimWrapped(fci_mods_credit(i));
                 ImGui::Unindent();
                 ImGui::Spacing();
                 ImGui::PopID();
