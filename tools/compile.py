@@ -149,6 +149,12 @@ REPLACE = {
         "the main menu page's press handler (thiscall; the event's +4 is the element): B_CheatsDebug opens "
         "the mod menu (fci_mainmenu.c, re/notes/MENUS.md)",
     ),
+    "sub_0046FEF0": (
+        "prehook",
+        "the hit decal's placement (esi = material; entity, position, normal, part, life; cdecl): on a hit "
+        "character's flesh decal, blood splats on the floor below and the wall behind (fci_blood.c, "
+        "re/notes/BLOOD.md)",
+    ),
     "sub_0021FFA0": (
         "gate",
         "a menu background video's update (eax = video, ret 4): skipped until its next frame is due by the "

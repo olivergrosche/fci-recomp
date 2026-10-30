@@ -72,8 +72,46 @@ belongs to that entity (moved into its space), not to the wall behind or the flo
 Floor splats from particles do not work either: a flat emitter (Flags 1, the water splashes' flag) that
 falls from the hit vanished within 1 to 2 s whatever its Bounciess (0, 0.05, 0.3) and LifeTime (12, 30),
 while the same emitter without gravity lived its 30 s: falling particles die where they meet the ground.
-Splats on walls and floors would need the engine to project the flesh decal along the shot onto the world
-(a code change at sub_0046FEF0); what data can do is the size and texture of the mark on the body.
+Splats on walls and floors need the engine's help: src/fci_blood.c (next section).
+
+## Splats on walls and floors (src/fci_blood.c)
+
+Found and built 2026-10-31. A prehook on the hit decal's placement (Instincts sub_0046FEF0, Evolution
+sub_003347F3: esi = the material's entry; entity, position, normal, part, life; cdecl) acts when the engine
+puts the flesh decal on a hit character (an entity, the material's decal 6, the gore byte clear): it casts
+two rays with the engine's own ray test, against static entities and terrain only (types 0x101, flags 0x100
+as the scripts' System:RayWorldIntersection, so the hit body and other characters are not in the way), from
+the hit point 3 m down and 3 m on along the shot (the hit normal faces the shooter: the ray goes against
+it), and where they meet the world it calls the engine's decal routine with no entity, as for a bullet hole:
+the flesh decal's texture (with the blood mods the game's splat in the mod's colour, `halo-blood-red` the
+same splat red; without a blood mod the game's small red wound mark), a random turn, the size by the hit
+(big 1.0 m, medium 0.75, small 0.55, each +-20 %, times gfx-blood-splats-size) and the life value 30
+(bullet holes 15, the mark on a body 2). The splats lay flat on the ground and stayed at least 30 s in the
+runs.
+
+| | Instincts | Evolution |
+|---|---|---|
+| hook | 0046FEF0 (tools/compile.py) | 003347F3 (its profile, the hook named 0046FEF0) |
+| decal routine | 0046FFD0: ecx = position, eax = normal, edx = texture; size, entity, part, life | 003348CD: the texture in edi |
+| ray test | 00376000 (world, origin, direction, types, flags, max hits, skip, skip), ebx = hits, ret 0x30 | 00284467: ebx = world, the hits after the flags |
+| physical world | [006B38F8] (the bullet's own ray, 000EA558) | [0056B508] |
+| decal textures, gore byte | 006B14E4, 006B4AF1 | 00568DA4, 0056C6F1 |
+| blood size | the call's return address: 0046F83D big, 0046F8B5 medium, 0046F925 small | one call (00334439) for kinds 5 to 7: the dispatcher's kind 0x40 above the return address |
+
+A ray hit is FC1's ray_hit (0x34 bytes: dist, collider, part, part id, surface, point +0x14, normal +0x20,
+terrain, next); the first is the solid hit. The hook saves and restores the guest registers, the XMM
+registers and the x87 stack around its calls. Limits: one floor and one wall splat a hit, none within 0.3 m
+of the last 32, at most 10 a second; past that the engine's decal manager keeps its own pool (its size not
+decoded; with 16 splats down at once nothing was lost). fci.ini `gfx-blood-splats = 0` switches it off,
+`gfx-blood-splats-size` scales it; RECOMP_FCI_BLOOD_SPLATS_LOG=1 prints each hit and splat.
+
+Checked in the game (test installs, the user's display options, the Elite blood mods): Instincts' 02_Native
+from the user's save, Elites hit on the jungle path at 10 to 15 m: blue-violet splats on the path's edge and
+on the road beside a dead Elite, none with the switch off (fci-modsrc out/halo-blood/
+ingame-splats-before-after.png); the log puts them 0.2 to 1.4 m below the hits, normals up. Evolution's
+opening ride: splats on the road at the gate (log), drawn as world decals; no frame caught them in view.
+No splat on a wall yet: the fights in these two places had no wall within 3 m behind the target (the log
+says so per hit), and on a low hit the shot's ray meets the ground behind.
 
 ## The mods (tools/blood_recolor.py)
 
@@ -133,8 +171,9 @@ the library's tint and the pool texture, which 01_Beach's meat pieces share), th
 ## Open
 
 - In the game: Evolution's bigger sprays (no hit on a frame), the sapper explosion (levels 10, 11, 13).
-- Splats on walls and floors: an engine change (project the flesh decal along the shot onto the world with
-  a longer life); the 2.0 / 15.0 value and the decal manager's limit on decals are not decoded.
+- Splats (fci_blood.c): a wall splat and an Evolution splat in view not seen in the game yet; knife hits
+  (sub_0046FF90, the slash decal) leave none; without a blood mod the splat is the small wound mark; the
+  decal manager's pool size and what the life value (2, 15, 30) counts are not decoded.
 - The size argument of the blood table (damage, weapon or distance) and the rest of a material entry.
 - Per-creature blood (an engine hook on sub_0046F9B0 that picks the effect by what was hit, and new effect
   entries in the libraries); Jack's underwater cloud and the scripted human blood would then stay red.

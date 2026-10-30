@@ -39,6 +39,8 @@ static const struct {
         {"gfx-object-draw-distance", "RECOMP_CVAR_e_obj_view_dist_ratio"},
         {"gfx-object-lod-distance", "RECOMP_CVAR_e_obj_lod_ratio"},
         {"gfx-foliage-lod", "RECOMP_CVAR_e_obj_sprite_switch_dist_ratio"},
+        {"gfx-blood-splats", "RECOMP_FCI_BLOOD_SPLATS"},
+        {"gfx-blood-splats-size", "RECOMP_FCI_BLOOD_SPLATS_SIZE"},
         {"controls-mouse-keyboard", "RECOMP_KEYBOARD"},
         {"mods-menu-key", "RECOMP_FCI_MODS_KEY"},
         {"controls-walk-speed", "RECOMP_WALK_SCALE"},

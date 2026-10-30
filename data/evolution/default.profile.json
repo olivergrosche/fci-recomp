@@ -77,6 +77,11 @@
       "gate",
       "the main menu page's press handler (thiscall; the event's +4 is the element; returns al = 0, ret 4; vtable 004BEC78 slot 2), as Instincts' 0014EFF0: B_SpecialFeatures opens the mod menu instead of the Special Features area (fci_mainmenu.c, re/notes/MENUS.md)"
     ],
+    "sub_003347F3": [
+      "prehook",
+      "the hit decal's placement (esi = material; entity, position, normal, part, life; cdecl), as Instincts' 0046FEF0 (gore byte 0056C6F1, decal textures 00568DA4): on a hit character's flesh decal, blood splats on the floor below and the wall behind (fci_blood.c, re/notes/BLOOD.md)",
+      "0046FEF0"
+    ],
     "sub_0012C35F": [
       "prehook",
       "a vehicle drive (eax = vehicle), from the movement handler 0012C298: RECOMP_FCI_VEHTRACE (fci_vehdiag.c)"
@@ -103,6 +108,50 @@
     "FCI_GAME_TIMER": [
       "0x0056CCC8",
       "the engine timer, as Instincts' 00644488: the game update (0017E185) updates it (001801EB), takes its frame time (00180281, the double at +0x68) and hands it and the clock (+0x28) to the scripts as _frametime and _time (0018FA11)"
+    ],
+    "FCI_BLOOD_DECAL_SPAWN": [
+      "0x003348CD",
+      "the decal routine, as Instincts' 0046FFD0 (ecx = position, eax = normal; size, entity, part, life; cdecl) but the texture in edi (003348A7)"
+    ],
+    "FCI_BLOOD_RAY": [
+      "0x00284467",
+      "the physical world's ray test, as Instincts' 00376000 but with the world in ebx and the hits on the stack (origin, direction, types, flags, hits, max hits, skip, skip; ret 0x30), as System:RayWorldIntersection calls it (00192A6F)"
+    ],
+    "FCI_BLOOD_RAY_WORLD_IN_EBX": [
+      "0x00000001",
+      "the ray test's convention (00192A4D..00192A6F)"
+    ],
+    "FCI_BLOOD_WORLD": [
+      "0x0056B508",
+      "the physical world, as Instincts' 006B38F8 (the ray callers 000301C1, 00030BAE)"
+    ],
+    "FCI_BLOOD_DECAL_TEXTURES": [
+      "0x00568DA4",
+      "the hard-coded decals' textures, as Instincts' 006B14E4 (filled at 00333F17, read at 00334868)"
+    ],
+    "FCI_BLOOD_NO_GORE": [
+      "0x0056C6F1",
+      "the gore byte, as Instincts' 006B4AF1 (00334845)"
+    ],
+    "FCI_BLOOD_RET_BIG": [
+      "0x00000000",
+      "none: kinds 5 to 7 share one call (00334434)"
+    ],
+    "FCI_BLOOD_RET_MEDIUM": [
+      "0x00000000",
+      "none"
+    ],
+    "FCI_BLOOD_RET_SMALL": [
+      "0x00000000",
+      "none"
+    ],
+    "FCI_BLOOD_RET_KIND": [
+      "0x00334439",
+      "the hit dispatcher's (00333FF1) call of the decal placement for hit kinds 5, 6, 7 (blood big, medium, small: 00334368, 0033439B, 003343CE)"
+    ],
+    "FCI_BLOOD_KIND_AT": [
+      "0x00000040",
+      "the dispatcher's hit kind (its ebp+0xC) above the decal placement's return address: ebp-0x10 locals, 3 saved registers, 5 arguments, the return address"
     ]
   }
 }
