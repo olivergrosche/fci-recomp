@@ -1,49 +1,90 @@
 # Models (.xbg)
 
 Started 2026-10-29 on Instincts' first-person Beretta (`animations\weapons\first\beretta\beretta_first.xbg`,
-rigid) and a soldier (`animations\characters\mercenaire\specops01.xbg` in `01_Beach`, skinned). Nothing
-writes models yet; this is what is known.
+rigid) and a soldier (`animations\characters\mercenaire\specops01.xbg` in `01_Beach`, skinned); the weapons
+were worked out on 2026-10-30 on the MP5 (`mp5n_first.xbg`, `mp5n_3rd.xbg`) of both games. tools/xbg.py
+reads them, exports .obj and rebuilds a rigid model with new geometry; tools/weapon_import.py puts a glTF
+model in place of a weapon. Skinned vertices are not placed yet.
 
 ## Header
 
-`00 09 01 01`, 0, -1, `0x4A00`, then (offset, count) pairs, then floats. Unused space in a model is filled
-with `CD` (an uninitialised debug heap), so sections end where the `CD` run starts.
+Byte 0 is the version (0 Instincts, 1 Evolution), then `09 01 01`, 0, -1, `0x4A00`, then (offset, count)
+pairs and floats. Unused space in a model is filled with `CD` (an uninitialised debug heap).
 
-| At | Beretta | Soldier | |
-|---|---|---|---|
-| 0x10 | 0xB0, 2 | 0xB0, 13 | materials, 0x38 bytes each: the Beretta's two name textures 0, 1 and 2, 3 (diffuse, normal); the rest unread |
-| 0x18 | 0x120, 4 | 0x330, 15 | textures, 8 bytes each: the path's offset in the string table, 0 |
-| 0x20 | 0x290, 4 | 0xA68, 57 | bones, 0x4C bytes each; seen: an identity quaternion, small offsets, 1.0 scales (fields not mapped yet) |
-| 0x30 | 0x3C0, 4 | 0x2AE0, 2 | ? (12 bytes each) |
-| 0x38 | 0x3F0, 4 | 0x2B00, 2 | ? 0x34 bytes each, with a bone number, a submesh's vertex offset and a bounding sphere (guess: one part per bone) |
-| 0x40 | 0x4C0, 1 | 0x2B70, 1 | submesh table (below) |
-| 0x48 | 0x580, size | 0x2DE0, size | vertex and index data |
-| 0x68 | 0x144, 0x100 | 0x3AC, 0x336 | string table: offset, size of the texture paths; the bone names follow |
-| 0x70 | | | bounding box (min, max of each axis) and sphere (centre, radius) |
-| 0x9C | 0.002 | 1/32767 | position scale |
-| 0xA0 | 0.5, 1/65536 | | texture coordinate offset and scale |
+| At | MP5 (first person) | |
+|---|---|---|
+| 0x10 | 0xB0, 1 | materials, 0x38 bytes each (not mapped; the MP5's names texture 0 and 1) |
+| 0x18 | 0xF0, 2 | textures, 8 bytes each: the path's offset in the string table, 0 |
+| 0x20 | 0x194, 3 | bones: a 4-byte 0, then 0x48 bytes each (below) |
+| 0x28 | -1, 0 | |
+| 0x30 | 0x270, 3 | bone lookup, 8 bytes each: a name hash, the bone number twice (u16), sorted by hash |
+| 0x38 | 0x290, 3 | parts, 0x30 bytes each (below) |
+| 0x40 | 0x330, 1 | submesh table (below) |
+| 0x48 | 0x3A0, 0x6710 | vertex and index data: offset, size |
+| 0x58 | 0x6AC0, 0 | the end: four zero bytes, 32-byte aligned after the data |
+| 0x60 | 0, 0x62 | |
+| 0x68 | 0x104, 0x56 | string table: the texture paths (their size), then the bone names, then them again in upper case |
+| 0x70 | | bounding box: min, max of x, then of y, then of z |
+| 0x88 | | bounding sphere: centre, radius |
+| 0x9C | 1/32767 | position scale (0.002 in the Beretta and the third-person models) |
+| 0xA0 | 0.5, 1/65536 | texture coordinate offset and scale |
+
+A bone: first child, next sibling, parent (-1 for none), rotation (x, y, z, w), position, scale (3 floats
+each), -1, 1.0, a u16 0xFF and the u16 offset of its name in the string table, 0, a hash. The MP5's bones:
+`B_FRAME` at the origin, `b_Magazine` at (0.218, 0.034, 0.034) and `b_Slide` (the cocking handle) at
+(0.349, 0.055, 0.143), both children of the frame, no rotation.
+
+A part (one per bone in the weapons): its triangle count, its bone, its submesh's vertex offset, 0,
+`0x00010001`, a bounding sphere (centre in the bone's frame, radius), the offset of the bone's upper-case
+name, then -1 and 0 in Instincts, 0 and 0 in Evolution (the only other difference between the two games'
+MP5 models besides the version byte).
 
 ## Submeshes
 
 Nine ints each, until one does not start `FFFF`: `FFFF` + material index, vertex offset and index offset
-(both from the data start), stride << 16 | index count, `53BF` << 16 | vertex count, then for skinned
-meshes eight bone palette bytes, then zeros. Indices are 16-bit triangle strips (degenerate triangles join
-the strips); in the Beretta they fill the data exactly to its size.
+(both from the data start), stride << 16 | index count, a vertex tag << 16 | vertex count (`53BF` with
+tangents, `5D91` without), eight bone palette bytes (FF in the rigid ones), zeros. Each submesh's vertices
+start 32-byte aligned (CD between), its indices follow them directly. Indices are 16-bit triangle strips;
+degenerate triangles join the walks. Seen from the front a triangle's vertices go clockwise: for an even
+triangle of the strip (a, b, c), cross(b - a, c - a) points away from its normals (Direct3D's default).
 
 ## Vertices
 
-Rigid, 24 bytes (the Beretta):
+Positions are int16 times the position scale, followed by an int16 1; texture coordinates int16 * 1/65536 +
+0.5 (v down the image, as in Direct3D). Directions are D3DCOLORs: bytes z, y, x around 128 ((b - 128) / 127),
+then 128.
 
-| Bytes | |
-|---|---|
-| 0-7 | position: x, y, z as int16 times the position scale, then 1 |
-| 8-11 | texture coordinates: u, v as int16 / 65536 + 0.5 (checked: the Beretta's frame lies on its texture) |
-| 12-15 | normal, 16-19 tangent, 20-23 binormal: x, y, z as bytes around 128, then 128 |
+| Size | Seen in | After position and uv |
+|---|---|---|
+| 24 | first-person weapons | normal, tangent (+u), binormal (-v, up the image) |
+| 16 | third-person weapons | normal |
+| 28 | characters | 4 bytes that look like two weights (bytes adding up to 255) and two palette slots times 4, then normal, tangent, binormal; positions about +-1 at 1/32767, relative to something (bones or another scale): open |
 
-Skinned, 28 bytes (the soldier): the same, with 4 bytes after the texture coordinates that look like two
-weights (bytes adding up to 255) and two palette slots times 4. Their positions span about +-1 at the
-1/32767 scale and do not match the bounding box, so they are relative to something (the bones, or another
-scale): open.
+Checked on the MP5's 664 frame triangles: the normals agree with the faces (0.97), the tangents with +u
+(0.98) and the binormals with -v (0.97), each only in the z, y, x byte order.
 
-The Beretta has five submeshes and four bones (frame, magazine, hammer, slide); the frame's submesh holds
-no slide, so the parts likely hang on the bones rigidly (to be checked against the 0x38 table).
+The weapons are rigid: each part's vertices are in its bone's frame (the MP5's magazine around its bone's
+origin; placed by its bone the model's box is the header's to the float). The animations move the bones.
+Units are metres, X is the muzzle, Z up; the third-person MP5 has the first-person one's size and
+place, so one placement serves both.
+
+## Textures of a weapon
+
+The MP5: `mp5n_df` 256x256 DXT3 (alpha 153-221: gloss), `mp5n_nt` 256x256 DXT1 normal map, `mp5n_3rd`
+128x128 DXT5 (alpha 123-255), no mip levels. The normal maps are DirectX style, green pointing down the
+image (+v): on every weapon checked (MP5, Beretta, M16, P90) the green channel's change across correlates
+positively with the red channel's change down (an OpenGL map, green up, correlates negatively).
+
+## Importing a glTF (tools/weapon_import.py)
+
+The template is the weapon's own model: materials, textures, bones and parts stay, each part's submesh gets
+the pieces (connected parts of the glTF mesh) chosen for its bone, in the bone's frame. All materials go
+into one atlas (diffuse with gloss from 1 - roughness as alpha, DXT5; normal map DXT1; all mip levels).
+The binormals are made to point along -v whatever the glTF's tangents say; the normal maps' green is
+flipped from the glTF standard (up) unless the model's are DirectX style already.
+
+First weapon: the Halo MA5B (Sketchfab "MA5B Remaster", CC-BY-4.0) in place of the MP5. Its pistol grip
+was put on the MP5's (centre about (0.082, 0.034, 0) in the frame), 2.2 mm per glTF unit; barrel height,
+length and handguard then land on the MP5's. 26,114 of its 36,400 triangles are cartridges inside the
+magazine and the chamber and are left out; it has no separate magazine, so `b_Magazine` and `b_Slide`
+get a placeholder triangle.
