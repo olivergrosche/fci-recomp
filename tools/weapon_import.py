@@ -38,7 +38,9 @@ More keys:
                                                 several models from one config; an entry may also give its own
                                                 source, axes, rotate, scale, anchor, drop, parts, keep, frame,
                                                 position_scale, drop_materials, double_sided (a third-person
-                                                model from a world model, a model turned another way)
+                                                model from a world model, a model turned another way), and
+                                                template and out (a model from another archive: "out" may
+                                                list several folders, one per archive that holds it)
     "rotate": [0, 26, 0]                        degrees about the game's X, Y, Z (in that order), about the
                                                 anchor, after the axes
     "drop": ["frame bullet", [[...], [...]]]    an entry is a box or the name of a glTF node (all of its
@@ -528,6 +530,8 @@ PER_MODEL = (
     "position_scale",
     "drop_materials",
     "double_sided",
+    "template",
+    "out",
 )
 
 
@@ -681,10 +685,11 @@ def build_model(cfg, name, base, prims, piece, boxes, fr, maps):
     ordered = [meshes[sm.index] for sm in model.submeshes]
     rebuilt = xbg.rebuild(template, ordered, position_scale(cfg.get("position_scale"), ordered))
 
-    out = base / cfg["out"]
-    target_file = out / name
-    target_file.parent.mkdir(parents=True, exist_ok=True)
-    target_file.write_bytes(rebuilt)
+    outs = [base / o for o in (cfg["out"] if isinstance(cfg["out"], list) else [cfg["out"]])]
+    for out in outs:
+        target_file = out / name
+        target_file.parent.mkdir(parents=True, exist_ok=True)
+        target_file.write_bytes(rebuilt)
     paths = [t.lstrip("\\").replace("\\", "/").lower() for t in model.textures]
     if material == (None, None):  # no maps named: every texture, a normal map by its name
         written = [(path, path.endswith("_nt.xbt")) for path in paths]
@@ -694,9 +699,10 @@ def build_model(cfg, name, base, prims, piece, boxes, fr, maps):
         old = folder / path
         fmt = DXT1 if is_normal or (old.exists() and xbt.header(old.read_bytes())[3] == DXT1) else DXT5
         data = dxt_xbt(normal if is_normal else diffuse, fmt)
-        f = out / path
-        f.parent.mkdir(parents=True, exist_ok=True)
-        f.write_bytes(data)
+        for out in outs:
+            f = out / path
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_bytes(data)
     new = xbg.Model(rebuilt)
     kept = sorted(set(paths) - {path for path, _ in written})
     print(f"{name}: {dropped} triangles left out, position scale {new.scale:.6g}")
