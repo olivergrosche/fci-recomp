@@ -157,22 +157,38 @@ y -0.06..0.54, z 1.57..1.68), 0.06 m from the camera.
 ### What the importer does about it
 
 vehicle_import's `clear` keeps the drawn geometry of the given bones 0.3 m from the eye bones and, with
-`orbit` 0.28, from the level circle of that radius round each (every place the camera can be); a cut piece
-goes whole when small, a large one keeps its largest connected remainder. `inner` gives the body a lit inside
-(each triangle again, turned round, 1 cm in, normals turned in and tipped up), `lower` brings the walls beside
-a seat down to 0.6 m under its eye. check.py draws every seat from the measured camera model (ahead, 80 and
-100 deg each way, back, 30 deg down). Turret parts (`turret_mesh`) are not cleared: they turn with the gun
-about `turret` (as the game's own Browning, whose barrels sweep the rear seats); clearing them for every turret
-angle cut the Warthog's mount column in the Humvee away (the gun floated).
+`orbit` 0.28, from the level circle of that radius round each (every place the camera can be); with `floor`
+0.08 only what comes near higher than 0.08 m under the eye counts (a windshield frame, a beam or roll bar at eye
+height goes; a hood, dashboard or sill below stays). A cut piece goes whole when small, a large one keeps its
+largest connected remainder. check.py draws every seat from the measured camera model (ahead, 80 and 100 deg
+each way, back, 30 deg down). Turret parts (`turret_mesh`) are not cleared: they turn with the gun about
+`turret` (as the game's own Browning, whose barrels sweep the rear seats).
+
+The Humvee's seats sit 0.36 m before the Warthog's (its driver's camera looked from 0.12 m over the Warthog's
+hood, 4 cm behind its rear edge: kept, the hood filled the view; cleared, it had holes onto the ground), and its
+gun 0.94 m before the Warthog's (the mount's column then stood between the front seats' heads). The Humvee
+configs move them with `helpers` (`{"by": [dx, dy, dz]}`, metres): `driver_sit_pos`, `eye_pos` and
+`steering_pivot` by (0.119, -0.36, 0.028), `passenger1_sit_pos` and `passenger1_eye_pos` by (-0.119, -0.36,
+0.028), onto the Warthog's seats (Halo's `marker driver`), and `turret`, `turret_pivot`, `gun`,
+`gunner_eye_pos`, `gunner_sit_pos` by (0, -0.937, 0.079), onto the Warthog's own gun (Halo's `frame gun`): the
+gunner stands in the bed as in Halo, his view of the gun is unchanged (eye and gun moved together). The rear
+passengers stay (their heads are where the Warthog's roll bar is, which the clearance takes). The physics
+proxies in the tail (the turret's too) stay where they were. From every seat the nearest built triangle is
+then 0.28 m or more away (offline, measured camera model).
+
+Given up (2026-10-31, the user's Deck): `inner` (a lit inside: every triangle again 1 cm in, turned round)
+z-fought with the outside at a distance (frayed lower edges, white flickering fragments) and showed through
+where the outside was cut; `lower` (walls beside a seat pulled down) bent the body sides. Both options stay in
+the importer, unused. Halo's display decals (`decal_buttons`, `decal_sensor`) lie 1 to 4 mm over the hull and
+showed as a garbled block on the dashboard: left out (`drop_materials`).
 
 ## Open
 
 - Not measured yet: the other seats' cameras (assumed the same: eye bone + 0.27 to 0.28 m along the view), the
-  head-turn limit beyond 100 deg, whether the camera moves when looking down, and whether `turret_mesh` is
-  drawn on `turret` and turns with the gun (assumed from its shape). In the Humvee the Warthog's mount column
-  stands between the front seats: 0.14 to 0.16 m from a front seat's camera looking 100 deg inward with the
-  gun ahead, 0.10 to 0.12 m when the gun turns toward a seat.
-- The seats stay the template's: the Humvee's gunner stands 0.57 m below the Warthog's deck between the seat
-  backs (legs in the body), the pickup's gunner 0.15 m below its bed; the pickup's driver sits 0.14 m above
-  the Warthog's seat. `helpers` can move helper bones, untested.
+  head-turn limit beyond 100 deg, whether the camera moves when looking down, whether the game reads the moved
+  seat and turret helpers from the model (assumed: it reads every other bone from it) and whether `turret_mesh`
+  is drawn on `turret` and turns with the gun (assumed from its shape).
+- The pickup's seats stay the template's (its driver sits 0.26 m before and 0.1 m above the Warthog's seat, its
+  camera high enough over the hood); its gunner stands 0.15 m below the bed. The Humvee's gunner, moved into the
+  bed, stands about 0.3 m below its floor (legs in the body).
 - The collision mesh stays the Humvee's (or the pickup's): bullets hit its shape, not the Warthog's.

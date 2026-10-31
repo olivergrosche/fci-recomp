@@ -58,7 +58,9 @@ A model's "clear": {"around": ["eye_pos", "passenger1_eye_pos"], "radius": 0.3, 
 the triangles of those bones that come within the radius of those helper bones (bind pose): the seats' eyes
 keep a clear view (the games draw back faces too: a panel next to a camera fills the screen dark); "orbit": 0.28
 clears round the level circle of that radius about each eye too, where the camera goes as the head turns (the
-games put it 0.27 to 0.28 m before the eye bone in the view's direction, measured). What the cut leaves floating
+games put it 0.27 to 0.28 m before the eye bone in the view's direction, measured); "floor": 0.12 counts only
+what comes near higher than that under the eye (a windshield frame or roll bar at eye height goes, the hood and
+the sills below stay). What the cut leaves floating
 goes too: a small connected piece (up to 50 triangles) it cuts into goes whole, a larger one keeps only its
 largest connected remainder (a windshield frame cut at its pillars loses its top bar).
 
@@ -88,7 +90,9 @@ gun) make an atlas of the same layout with them; "diffuse": "<path>" points its 
 textures (one only it and the config's other models use), which then takes that atlas.
 
 "helpers": {"Corona_HeadLight1": "marker headlights", "front_light": [0.9, 0.2, 0.6]} moves helper bones
-(lights, exhaust: children of the root) to a glTF node's place or a source point, through the body fit.
+(lights, exhaust: children of the root) to a glTF node's place or a source point, through the body fit;
+{"eye_pos": {"by": [0.12, -0.36, 0.1]}} moves one by metres in the model ({"at": [x, y, z]}: to a place), as a
+seat (`*_sit_pos`, `*_eye_pos`, `steering_pivot`) that has to sit in the new body's seat.
 
 Archives: each model goes into every archive (matching "archives") that holds it and one of the config's
 "vehicles" (default: its first model; wrecks and debris lie in levels without the vehicle too); archives that
@@ -451,16 +455,20 @@ def convert(template, mcfg, src, body_cfg, place_uv, base):
         by_part.setdefault(n, []).append((k, t))
     bones = sorted({bone_index(model, parts[n]["bone"]) for n in by_part})
     target = receivers(model, material, bones)
+    places = helper_places(model, mcfg.get("helpers", {}), body, gltf, body_cfg)
+
+    def place_of(name):  # a bone's place, moved by "helpers"
+        b = bone_index(model, name)
+        return places.get(b) or model.bone_matrix(b)[1]
+
     meshes = {sm.index: ([], []) for sm in model.submeshes}
     frames = {b: model.bone_matrix(b) for b in bones}
     nearest_color = {i: Nearest(model, model.submeshes[i]) for i in set(target.values())}
     lower = mcfg.get("lower", {})  # side walls beside the seats no higher than "below" under the eye
-    lower_at = [model.bone_matrix(bone_index(model, b))[1] for b in lower.get("around", ())]
+    lower_at = [place_of(b) for b in lower.get("around", ())]
     lower_bones = {bone_index(model, b) for b in lower.get("bones", ())}
     clear = mcfg.get("clear", {})  # room around the seats' eyes: no triangle of these bones comes nearer
-    clear_at = orbits(
-        [model.bone_matrix(bone_index(model, b))[1] for b in clear.get("around", ())], clear.get("orbit", 0)
-    )
+    clear_at = orbits([place_of(b) for b in clear.get("around", ())], clear.get("orbit", 0))
     clear_radius = clear.get("radius", 0.3)
     clear_bones = {bone_index(model, b) for b in clear.get("bones", ())}
     cleared = 0
@@ -471,7 +479,7 @@ def convert(template, mcfg, src, body_cfg, place_uv, base):
         selected = [prims[k]["pos"][i] for k, t in tris for i in prims[k]["tris"][t]]
         place = part_place(part, body, dst, tires, prims, model, selected)
         if bone in clear_bones and clear_at:
-            kept = cleared_room(tris, prims, piece, place, clear_at, clear_radius)
+            kept = cleared_room(tris, prims, piece, place, clear_at, clear_radius, clear.get("floor"))
             cleared += len(tris) - len(kept)
             tris = kept
         rot, pos = frames[bone]
@@ -558,7 +566,7 @@ def convert(template, mcfg, src, body_cfg, place_uv, base):
             struct.pack_into("<I", rebuilt, sm.at, (word & 0xFFFF0000) | material)
     if "diffuse" in mcfg:  # the material draws from another of the model's textures (its own gain)
         struct.pack_into("<i", rebuilt, model.materials[material].at + 0x0C, texture_index(model, mcfg["diffuse"]))
-    moved = move_helpers(rebuilt, model, mcfg.get("helpers", {}), body, gltf, body_cfg)
+    moved = move_helpers(rebuilt, model, places)
     new = xbg.Model(bytes(rebuilt))
     counts = ", ".join(
         f"{model.bones[b].name} {len(xbg.strip_triangles(new.submeshes[target[b]].strip))}" for b in bones
@@ -599,15 +607,20 @@ def lowered(p, seats, lower):
 SMALL_PIECE = 50  # triangles: a piece this small goes whole when the room around a seat cuts into it
 
 
-def cleared_room(tris, prims, piece, place, around, radius):
+def cleared_room(tris, prims, piece, place, around, radius, floor=None):
     """the triangles left when those within radius of the points (placed) go, and what that cut off: a small
-    piece goes whole, a large one keeps its largest connected remainder (no floating remnants)"""
+    piece goes whole, a large one keeps its largest connected remainder (no floating remnants); with a floor,
+    only what comes near higher than that under the point counts (a hood or sill below the eyes stays)"""
+
+    def near(c, tri):
+        if floor is None:
+            return point_triangle(c, *tri) < radius
+        return any(point_triangle(c, *t) < radius for t in above(tri, c[2] - floor))
+
     cut = {
         (k, t)
         for k, t in tris
-        if any(
-            point_triangle(c, *(place.point(prims[k]["pos"][i]) for i in prims[k]["tris"][t])) < radius for c in around
-        )
+        if any(near(c, [place.point(prims[k]["pos"][i]) for i in prims[k]["tris"][t]]) for c in around)
     }
     if not cut:
         return tris
@@ -648,6 +661,19 @@ def cleared_room(tris, prims, piece, place, around, radius):
             largest[pc] = members
     stay = {kt for members in largest.values() for kt in members}
     return [(k, t) for k, t in keep if piece[k][t] not in touched or (k, t) in stay]
+
+
+def above(tri, h):
+    """the part of a triangle higher than h, as triangles (none, one or two)"""
+    poly = []
+    for i in range(3):
+        a, b = tri[i], tri[(i + 1) % 3]
+        if a[2] >= h:
+            poly.append(a)
+        if (a[2] >= h) != (b[2] >= h):
+            f = (h - a[2]) / (b[2] - a[2])
+            poly.append(tuple(p + f * (q - p) for p, q in zip(a, b)))
+    return [(poly[0], poly[i], poly[i + 1]) for i in range(1, len(poly) - 1)]
 
 
 def point_triangle(p, a, b, c):
@@ -707,21 +733,29 @@ class Nearest:
         return (255, 255, 255, 255)
 
 
-def move_helpers(b, model, helpers, body, gltf, cfg):
-    """helper bones (children of the root) moved to a source node's place or point through the body fit"""
-    done = []
-    at = struct.unpack_from("<I", b, xbg.H_BONES)[0] + 4
+def helper_places(model, helpers, body, gltf, cfg):
+    """{bone index: its new place in the model} for the "helpers" (children of the root)"""
+    out = {}
     for name, where in helpers.items():
         bone = bone_index(model, name)
         if model.bones[bone].parent != model.root:
             raise SystemExit(f"error: helper {name} is not a child of the root")
-        src = node_place(gltf, cfg.get("axes", ["-x", "z", "y"]), where) if isinstance(where, str) else where
-        p = body.point(src)
-        rot, pos = model.bone_matrix(model.root)
+        if isinstance(where, dict):  # metres in the model: "at" a place, or "by" an offset from the template's
+            out[bone] = tuple(where["at"]) if "at" in where else xbg.add(model.bone_matrix(bone)[1], where["by"])
+        else:
+            src = node_place(gltf, cfg.get("axes", ["-x", "z", "y"]), where) if isinstance(where, str) else where
+            out[bone] = body.point(src)
+    return out
+
+
+def move_helpers(b, model, places):
+    """helper bones (children of the root) moved to their places"""
+    at = struct.unpack_from("<I", b, xbg.H_BONES)[0] + 4
+    rot, pos = model.bone_matrix(model.root)
+    for bone, p in places.items():
         local = xbg.mat_vec(xbg.transpose(rot), xbg.sub(p, pos))
         struct.pack_into("<3f", b, at + bone * xbg.BONE + 0x1C, *local)
-        done.append(name)
-    return done
+    return [model.bones[bone].name for bone in places]
 
 
 # --- the files ------------------------------------------------------------------------------------------------

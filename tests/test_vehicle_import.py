@@ -300,6 +300,35 @@ def test_orbit_clears_round_the_circle_the_head_turns_on(tmp_path):
     assert all(abs(math.hypot(x, y) - 0.28) < 1e-9 and z == 1.0 for x, y, z in points[1:])
 
 
+def test_floor_keeps_what_lies_below_the_eye(tmp_path):
+    cfg = config(tmp_path)
+    # the hull box's floor passes 0.28 m under the hull2 bone (the eye): within 0.35 m, but below a floor of 0.2
+    cfg["models"][0]["clear"] = {"around": ["hull2"], "radius": 0.35, "bones": ["hull2"], "floor": 0.2}
+    vi.build(cfg, tmp_path)
+    m = built(tmp_path)
+    assert len(xbg.strip_triangles(vi.bone_submeshes(m, vi.bone_index(m, "hull2"))[0].strip)) == 12  # kept
+    cfg["models"][0]["clear"]["floor"] = 0.3
+    vi.build(cfg, tmp_path)
+    m = built(tmp_path)
+    assert len(xbg.strip_triangles(vi.bone_submeshes(m, vi.bone_index(m, "hull2"))[0].strip)) == 1  # placeholder
+    assert vi.above(((0, 0, 0), (1, 0, 1), (0, 1, 1)), 0.5) and not vi.above(((0, 0, 0), (1, 0, 0), (0, 1, 0)), 0.5)
+
+
+def test_helpers_move_by_metres_and_the_clearance_follows(tmp_path):
+    cfg = config(tmp_path)
+    # the eye (hull2 bone, 0.28 m over the box's floor) moved 0.15 m down: 0.2 m round it now reaches the floor
+    cfg["models"][0]["clear"] = {"around": ["hull2"], "radius": 0.2, "bones": ["hull2"]}
+    cfg["models"][0]["helpers"] = {"hull2": {"by": [0, 0, -0.15]}}
+    vi.build(cfg, tmp_path)
+    m = built(tmp_path)
+    assert close(m.bone_matrix(vi.bone_index(m, "hull2"))[1], (0, 0, 0.85))
+    assert len(xbg.strip_triangles(vi.bone_submeshes(m, vi.bone_index(m, "hull2"))[0].strip)) == 1
+    cfg["models"][0]["helpers"] = {"hull2": {"at": [0, 0.5, 1.2]}}
+    vi.build(cfg, tmp_path)
+    m = built(tmp_path)
+    assert close(m.bone_matrix(vi.bone_index(m, "hull2"))[1], (0, 0.5, 1.2))
+
+
 def test_point_triangle_distance():
     a, b, c = (0, 0, 0), (1, 0, 0), (0, 1, 0)
     assert abs(vi.point_triangle((0.2, 0.2, 0.5), a, b, c) - 0.5) < 1e-9  # above the face
