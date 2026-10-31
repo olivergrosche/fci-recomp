@@ -462,3 +462,121 @@ def test_import_puts_a_gltf_on_the_template(tmp_path):
     nt = (tmp_path / "out" / "w" / "gun" / "gun_nt.xbt").read_bytes()
     assert xbt.header(df)[:2] == (64, 64) and xbt.header(df)[3] == weapon_import.DXT5 and xbt.header(df)[4] == 5
     assert xbt.header(nt)[3] == weapon_import.DXT1
+
+
+def test_a_new_material_and_submesh_keep_the_rest():
+    b = template()
+    paths = ["\\w\\gun\\gun_counter.xbt", "\\w\\gun\\gun_counter_nt.xbt"]
+    out, mat = xbg.add_material(b, 0, paths)
+    out = xbg.add_submesh(out, 0, mat, 24)
+    m, m0 = xbg.Model(out), xbg.Model(b)
+    assert mat == 1 and m.textures == m0.textures + paths
+    assert (m.materials[1].diffuse, m.materials[1].bump, m.materials[1].shader) == (2, 3, m0.materials[0].shader)
+    assert [x.name for x in m.bones] == [x.name for x in m0.bones]
+    assert [p.name for p in m.parts] == [p.name for p in m0.parts]
+    assert [(p.first, p.count) for p in m.parts] == [(0, 2), (2, 1)]  # the new one after the frame's
+    assert [(sm.material, len(sm.vertices)) for sm in m.submeshes] == [(0, 3), (1, 0), (0, 3)]
+    assert m.submeshes[2].vertices == m0.submeshes[1].vertices
+    for h in xbg.OFFSETS:  # every block moved by whole 16-byte steps
+        old, new = xbg.u32(b, h), xbg.u32(out, h)
+        assert (old in (0, 0xFFFFFFFF) and new == old) or (new - old) % 16 == 0
+    v = m.submeshes[0].vertices[0]
+    meshes = [(sm.vertices, xbg.strip_triangles(sm.strip)) for sm in m.submeshes]
+    meshes[1] = ([dict(v, pos=(0, 0, 0)), dict(v, pos=(0.01, 0, 0)), dict(v, pos=(0, 0, 0.01))], [(0, 2, 1)])
+    built = xbg.Model(xbg.rebuild(out, meshes))
+    assert len(built.submeshes[1].vertices) == 3 and built.parts[0].triangles == 2
+
+
+def gltf_quads(tmp_path, quads):
+    """quads (corner positions, material name) facing +z, each a primitive, uv over the whole texture"""
+    blob, views, accessors, prims, materials = b"", [], [], [], []
+    for corners, name in quads:
+        for data, kind in (
+            (b"".join(struct.pack("<3f", *p) for p in corners), "VEC3"),
+            (b"".join(struct.pack("<3f", 0, 0, 1) for _ in corners), "VEC3"),
+            (b"".join(struct.pack("<2f", u, v) for u, v in ((0, 1), (1, 1), (1, 0), (0, 0))), "VEC2"),
+            (struct.pack("<6H", 0, 1, 2, 0, 2, 3) + bytes(4), "SCALAR"),
+        ):
+            views.append({"buffer": 0, "byteOffset": len(blob), "byteLength": len(data) if kind != "SCALAR" else 12})
+            accessors.append(
+                {
+                    "bufferView": len(views) - 1,
+                    "componentType": 5123 if kind == "SCALAR" else 5126,
+                    "type": kind,
+                    "count": 6 if kind == "SCALAR" else 4,
+                }
+            )
+            blob += data
+        a = len(accessors) - 4
+        prims.append(
+            {
+                "attributes": {"POSITION": a, "NORMAL": a + 1, "TEXCOORD_0": a + 2},
+                "indices": a + 3,
+                "material": len(materials),
+            }
+        )
+        materials.append({"name": name, "pbrMetallicRoughness": {"baseColorFactor": [0.2, 0.4, 0.6, 1]}})
+    g = {
+        "asset": {"version": "2.0"},
+        "scene": 0,
+        "scenes": [{"nodes": [0]}],
+        "nodes": [{"mesh": 0}],
+        "meshes": [{"primitives": prims}],
+        "materials": materials,
+        "buffers": [
+            {"byteLength": len(blob), "uri": "data:application/octet-stream;base64," + base64.b64encode(blob).decode()}
+        ],
+        "bufferViews": views,
+        "accessors": accessors,
+    }
+    (tmp_path / "quads.gltf").write_text(json.dumps(g))
+
+
+def test_a_counter_display_gets_its_own_texture(tmp_path):
+    gun = [(0, 0, 0), (2, 0, 0), (2, 1, 0), (0, 1, 0)]
+    screen = [(0.5, 0.2, 0.1), (1.5, 0.2, 0.1), (1.5, 0.7, 0.1), (0.5, 0.7, 0.1)]
+    gltf_quads(tmp_path, [(gun, "gun"), (screen, "screen")])
+    folder = tmp_path / "extract" / "w" / "gun"
+    folder.mkdir(parents=True)
+    (folder / "gun.xbg").write_bytes(template())
+    cfg = {
+        "source": "quads.gltf",
+        "template": "extract",
+        "axes": ["x", "-z", "y"],
+        "scale": 0.1,
+        "anchor": {"source": [0, 0, 0], "target": [0, 0, 0]},
+        "texture": {"size": 64, "gloss": [100, 200]},
+        "out": "plain",
+        "drop_materials": ["screen"],
+        "models": [{"model": "w/gun/gun.xbg"}],
+    }
+    weapon_import.build(cfg, tmp_path)  # the same gun without the display
+    counter = {
+        "size": [32, 16],
+        "groups": [{"materials": ["screen"], "rect": [0.5, 0.0, 1.0, 1.0], "flip": "y"}],
+        "digits": [[0.5, 0.0, 0.75, 1.0], [0.75, 0.0, 1.0, 1.0]],
+        "compass": [0.0, 0.0, 0.5, 1.0],
+    }
+    cfg.update(out="out", drop_materials=[], models=[{"model": "w/gun/gun.xbg", "counter": counter}])
+    weapon_import.build(cfg, tmp_path)
+    out = tmp_path / "out" / "w" / "gun"
+    m = xbg.Model((out / "gun.xbg").read_bytes())
+    assert m.textures[2:] == ["\\w\\gun\\gun_counter.xbt", "\\w\\gun\\gun_counter_nt.xbt"]
+    frame, display, mag = m.submeshes
+    assert (frame.material, display.material, mag.material) == (0, 1, 0)
+    assert len(xbg.strip_triangles(frame.strip)) == 2 and len(xbg.strip_triangles(display.strip)) == 2
+    uvs = sorted((round(v["uv"][0], 3), round(v["uv"][1], 3)) for v in display.vertices)
+    assert uvs == [(0.5, 0.0), (0.5, 1.0), (1.0, 0.0), (1.0, 1.0)]
+    top = [v for v in display.vertices if v["uv"][1] < 0.5]  # flipped: the glTF's v 1 (its lower edge) at 0
+    assert all(abs(v["pos"][2] - 0.02) < 1e-3 for v in top)
+    # the atlas is the gun's alone, as without the display
+    assert (out / "gun_df.xbt").read_bytes() == (tmp_path / "plain" / "w" / "gun" / "gun_df.xbt").read_bytes()
+    raw = (out / "gun_counter.xbt").read_bytes()
+    w, h, size, fmt, levels, faces = xbt.header(raw)
+    assert (w, h, fmt, levels, faces) == (32, 16, weapon_import.A8R8G8B8, 6, 1)
+    level0 = xbt.swizzle(raw[32 : 32 + w * h * 4], w, h, 4, unswizzle=True)
+    stream = b"".join(level0[4 * i : 4 * i + 3] for i in range(18))
+    assert stream[:6] == b"FCIC\x01\x03" and stream[50:54] == b"CTR1"
+    assert struct.unpack_from("<12H", stream, 6) == (16, 0, 24, 16, 24, 0, 32, 16, 0, 0, 16, 16)
+    assert all(level0[4 * i + 3] == 255 for i in range(18))
+    assert xbt.header((out / "gun_counter_nt.xbt").read_bytes())[3] == weapon_import.DXT1

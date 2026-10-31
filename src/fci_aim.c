@@ -16,6 +16,7 @@ uint32_t fci_game_view(void);                 /* fci_threads.c: Camera_BuildView
 int fci_input_aim(float *yaw, float *pitch);  /* fci_input.c: degrees since last frame */
 void fci_trace_actor(uint32_t actor);         /* fci_trace.c */
 int fci_record_aim(float *yaw, float *pitch); /* fci_record.c */
+void fci_counter_view(float yaw);             /* fci_counter.c: the Halo rifles' compass */
 
 void fci_prehook_00098AE0(void)
 {
@@ -39,4 +40,6 @@ void fci_prehook_00098AE0(void)
             turn = -90.0f - now;
         MEMF(block + RE_GAME_VIEWINPUT_TURNPITCH) = turn;
     }
+    /* the yaw this frame's turn leaves (Player_ProcessInput subtracts turnYaw) */
+    fci_counter_view(MEMF(block + RE_GAME_VIEWINPUT_ANGLES + 8) - MEMF(block + RE_GAME_VIEWINPUT_TURNYAW));
 }

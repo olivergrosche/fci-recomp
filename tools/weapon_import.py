@@ -56,6 +56,26 @@ More keys:
                                                 draw it opaque)
     "position_scale": "fit"                     metres per int16 step: the finest power-of-two multiple of
                                                 1/32767 that holds the model (default: the template's)
+    "counter": {...}                            (in a first-person model's entry) an ammo counter display:
+                                                its triangles get a material and texture of their own, which the
+                                                renderer draws the rounds and a compass into (src/xbr/
+                                                fci_counter.cpp, re/notes/MODELS.md "Counter displays"):
+        "size": [128, 256]                      the texture (A8R8G8B8, powers of two, at least 18 wide)
+        "groups": [{...}, ...]                  the display's triangles, each taken by the first group whose
+                                                tests all hold: "materials" (glTF names), "select" (as drop, for
+                                                the triangle's piece), "within" (a box all three corners lie in),
+                                                "uv" ([[u0, v0], [u1, v1]], all three texture coordinates); then
+                                                "crop": true (their region of the material's maps is the texture,
+                                                widened to its shape) or "rect": [x0, y0, x1, y1] (their
+                                                coordinates spread over that part of it); "flip": "x", "y", "xy"
+        "digits": [box, box]                    the tens and the ones; a box is [x0, y0, x1, y1] in fractions of
+        "compass": box                          the texture, or {"uv": [u0, v0, u1, v1]} in the first crop
+        "erase": [box, ...]                     group's source texture; erase paints out what stands out bright
+        "background": [r, g, b], "gloss": n     where no crop covers; "colors" ({"digit", "edge", "compass",
+                                                "compass_fill": [r, g, b], "glow": [r, g, b, strength]}),
+                                                "style" ({"edge", "glow" in texels, "thickness", "gap" of the
+                                                digit's width}), "texture" (its path; default <model>_counter.xbt
+                                                beside the model), "preview" (a PNG of it with the boxes)
 
 The new geometry and its two textures go to the material of the template's largest submesh: each bone's
 geometry into its submesh with that material's textures; the bone's other submeshes (scope glass, a
@@ -476,6 +496,229 @@ def dxt_xbt(image, fmt):
     return xbt.MAGIC + struct.pack("<7I", image.width, image.height, len(data), fmt, len(levels), 1, 0) + data
 
 
+# --- the ammo counter's display (re/notes/MODELS.md "Counter displays") -----------------------------------
+
+A8R8G8B8 = 0x0C
+COUNTER_MAGIC, COUNTER_END = b"FCIC", b"CTR1"
+COUNTER_VERSION = 1
+# Halo CE's assault rifle: the digits' fill and edge, the compass's edge and fill, a glow (colour, strength)
+COUNTER_COLORS = {
+    "digit": (16, 85, 107),
+    "edge": (123, 186, 206),
+    "compass": (107, 150, 165),
+    "compass_fill": (0, 29, 46),
+    "glow": (40, 130, 160, 90),
+}
+COUNTER_BACKGROUND = (4, 12, 18)  # the display where no crop covers it
+
+
+def counter_selects(group, gltf, p, lo, hi, tri):
+    """a counter group takes a triangle: all its tests hold (glTF materials by name, "select" entries as in
+    drop for its piece, its corners "within" a box, its texture coordinates inside "uv")"""
+    names = {m.lower() for m in group.get("materials", ())}
+    if names and material_name(gltf, p["material"]).lower() not in names:
+        return False
+    if "select" in group and not any(selects(e, p, lo, hi) for e in group["select"]):
+        return False
+    if "within" in group:
+        corners = [p["pos"][i] for i in tri]
+        low = [min(c[k] for c in corners) for k in range(3)]
+        if not inside(group["within"], low, [max(c[k] for c in corners) for k in range(3)]):
+            return False
+    uvs = [p["uv"][i] for i in tri]
+    if "uv" in group:
+        (u0, v0), (u1, v1) = group["uv"]
+        if not all(u0 <= u <= u1 and v0 <= v <= v1 for u, v in uvs):
+            return False
+    return True
+
+
+def counter_groups(spec, gltf, prims, piece, boxes):
+    """{(primitive, triangle): group number} of the triangles the counter's groups take (the first group
+    that takes one), and each group's texture coordinate bounds (u0, v0, u1, v1)"""
+    taken, bounds = {}, {}
+    for k, (p, ids) in enumerate(zip(prims, piece)):
+        for j, (tri, n) in enumerate(zip(p["tris"], ids)):
+            uvs = [p["uv"][i] for i in tri]
+            for g, group in enumerate(spec["groups"]):
+                if counter_selects(group, gltf, p, *boxes[n][:2], tri):
+                    taken[(k, j)] = g
+                    u0, v0, u1, v1 = bounds.get(g, (math.inf, math.inf, -math.inf, -math.inf))
+                    us, vs = [u for u, _ in uvs], [v for _, v in uvs]
+                    bounds[g] = (min(u0, *us), min(v0, *vs), max(u1, *us), max(v1, *vs))
+                    break
+    for g, group in enumerate(spec["groups"]):
+        if g not in bounds:
+            raise SystemExit(f"error: counter group {g} ({json.dumps(group)[:80]}) takes no triangle")
+    return taken, bounds
+
+
+def flipped(x, y, flip):
+    return (1 - x if "x" in flip else x), (1 - y if "y" in flip else y)
+
+
+def counter_mapping(spec, gltf, prims, taken, bounds):
+    """per group, its texture coordinates' place in the counter texture (fractions, x right, y down) as a
+    function, and for a "crop" group its region of the source texture (u0, v0, u1, v1) and material"""
+    w, h = spec["size"]
+    maps, crops = {}, {}
+    for g, group in enumerate(spec["groups"]):
+        u0, v0, u1, v1 = bounds[g]
+        flip = group.get("flip", "")
+        if group.get("crop"):
+            material = next(prims[k]["material"] for (k, _), gg in taken.items() if gg == g)
+            tw, th = texture_size(gltf, material)
+            # the bounds in source texels, 2 counter texels clear on every side, widened to the counter's shape
+            pw, ph = max((u1 - u0) * tw, 1e-6), max((v1 - v0) * th, 1e-6)
+            s = max(pw / (w - 4), ph / (h - 4))
+            cu, cv = (u0 + u1) / 2, (v0 + v1) / 2
+            region = (cu - w * s / 2 / tw, cv - h * s / 2 / th, cu + w * s / 2 / tw, cv + h * s / 2 / th)
+            crops[g] = (region, material)
+
+            def f(u, v, r=region, flip=flip):
+                return flipped((u - r[0]) / (r[2] - r[0]), (v - r[1]) / (r[3] - r[1]), flip)
+        else:
+            x0, y0, x1, y1 = group["rect"]
+
+            def f(u, v, b=(u0, v0, u1, v1), r=(x0, y0, x1, y1), flip=flip):
+                fx = (u - b[0]) / (b[2] - b[0]) if b[2] > b[0] else 0.5
+                fy = (v - b[1]) / (b[3] - b[1]) if b[3] > b[1] else 0.5
+                fx, fy = flipped(fx, fy, flip)
+                return r[0] + fx * (r[2] - r[0]), r[1] + fy * (r[3] - r[1])
+
+        maps[g] = f
+    return maps, crops
+
+
+def texture_size(gltf, material):
+    """the size of a material's base colour map (1024 square without one)"""
+    m = gltf.g["materials"][material] if "materials" in gltf.g else {}
+    tex = m.get("pbrMetallicRoughness", {}).get("baseColorTexture")
+    return gltf.image(tex).size if tex else (1024, 1024)
+
+
+def counter_fractions(box, spec, maps):
+    """a box as fractions (x0, y0, x1, y1) of the counter texture: [x0, y0, x1, y1] as they are, or {"uv": [u0,
+    v0, u1, v1]} in the first crop group's source texture"""
+    if isinstance(box, dict):
+        g = next(g for g, group in enumerate(spec["groups"]) if group.get("crop"))
+        (ax, ay), (bx, by) = maps[g](*box["uv"][:2]), maps[g](*box["uv"][2:])
+        box = (min(ax, bx), min(ay, by), max(ax, bx), max(ay, by))
+    return tuple(min(1.0, max(0.0, c)) for c in box)
+
+
+def counter_box(box, spec, maps):
+    """a box (as counter_fractions takes it) as texels (x0, y0, x1, y1) of the counter texture"""
+    w, h = spec["size"]
+    return tuple(round(c * s) for c, s in zip(counter_fractions(box, spec, maps), (w, h, w, h)))
+
+
+def counter_marker(spec, maps):
+    """what the renderer recognises the texture by and draws with (xbr/fci_counter.cpp): a byte stream in the
+    blue, green and red bytes of row 0's first texels"""
+    colors = {**COUNTER_COLORS, **{k: tuple(v) for k, v in spec.get("colors", {}).items()}}
+    digits = [counter_box(b, spec, maps) for b in spec.get("digits", ())]
+    compass = counter_box(spec["compass"], spec, maps) if "compass" in spec else (0, 0, 0, 0)
+    if len(digits) not in (0, 2):
+        raise SystemExit("error: counter digits: two boxes, the tens and the ones")
+    digits = digits or [(0, 0, 0, 0)] * 2
+    flags = bool(spec.get("digits")) << 1 | ("compass" in spec)
+    style = spec.get("style", {})
+    out = COUNTER_MAGIC + bytes((COUNTER_VERSION, flags))
+    for box in (*digits, compass):
+        out += struct.pack("<4H", *box)
+    for k in ("digit", "edge", "compass", "compass_fill"):
+        out += bytes(colors[k][:3])
+    out += bytes(colors["glow"][:4])
+    out += bytes(
+        (
+            round(16 * style.get("edge", 1.5)),  # the bright edge's width, 1/16 texels
+            round(4 * style.get("glow", 3)),  # the glow's reach, 1/4 texels
+            round(255 * style.get("thickness", 0.2)),  # a segment's thickness, of the digit box's width
+            round(255 * style.get("gap", 0.04)),  # the gap between segments, of the width
+        )
+    )
+    return out + COUNTER_END, digits, compass
+
+
+def counter_image(spec, gltf, crops, cfg_texture, gain, flip_green, erase=()):
+    """the counter texture's picture under the digits (RGBA, alpha the gloss): the background colour, or a crop
+    group's region of its material's maps; in the erase boxes (fractions) the old marks are painted out at the
+    source's resolution, before the picture is scaled down"""
+    w, h = spec["size"]
+    lo, hi = tuple(cfg_texture.get("gloss", (120, 225)))
+    gloss = spec.get("gloss", lo)
+    im = Image.new("RGBA", (w, h), (*spec.get("background", COUNTER_BACKGROUND), gloss))
+    for g, (region, material) in crops.items():
+        cell = max(texture_size(gltf, material))
+        base, smooth, _ = material_maps(gltf, material, cell, flip_green, gain)
+        alpha = smooth.point(lambda v: round(lo + (hi - lo) * v / 255))
+        rgba = Image.merge("RGBA", (*base.split(), alpha))
+        crop = rgba.crop(tuple(round(c * cell) for c in region))
+        flip = spec["groups"][g].get("flip", "")
+        crop = ImageOps.flip(crop) if "y" in flip else crop
+        crop = ImageOps.mirror(crop) if "x" in flip else crop
+        im = counter_erase(crop, erase, crop.width / w).resize((w, h), Image.LANCZOS)
+    if not crops:
+        im = counter_erase(im, erase, 1.0)
+    return im
+
+
+def counter_erase(im, boxes, texel):
+    """in each box (fractions), what stands out bright from the box's median (the old digits, an icon, their
+    glow) painted over from the texels around it; texel is the picture's pixels per counter texel"""
+    from PIL import ImageFilter  # noqa: PLC0415
+
+    for fx0, fy0, fx1, fy1 in boxes:
+        box = (round(fx0 * im.width), round(fy0 * im.height), round(fx1 * im.width), round(fy1 * im.height))
+        part = im.crop(box)
+        rgb, alpha = part.convert("RGB"), part.getchannel("A")
+        lum = rgb.convert("L")
+        hist, n, median = lum.histogram(), 0, 0
+        while n < lum.width * lum.height / 2:
+            n += hist[median]
+            median += 1
+        grow = 2 * max(1, round(1.5 * texel)) + 1
+        level = median + 12
+        mask = lum.point(lambda v, level=level: 255 if v > level else 0).filter(ImageFilter.MaxFilter(grow))
+        # the masked texels start from the colour the rest has most, then take their neighbours' colour
+        rest = [c for c, m in zip(rgb.getdata(), mask.getdata()) if not m] or list(rgb.getdata())
+        flat = tuple(sorted(c[i] for c in rest)[len(rest) // 2] for i in range(3))
+        rgb = Image.composite(Image.new("RGB", rgb.size, flat), rgb, mask)
+        step = max(1, round(texel / 2))
+        for _ in range(max(12, round(6 * texel / step))):
+            rgb = Image.composite(rgb.filter(ImageFilter.BoxBlur(step)), rgb, mask)
+        im.paste(Image.merge("RGBA", (*rgb.split(), alpha)), box[:2])
+    return im
+
+
+def counter_xbt(image, marker):
+    """an A8R8G8B8 .xbt (swizzled levels down to 1 x 1) with the marker in row 0 of level 0: three bytes a
+    texel (blue, green, red), alpha 255, so an X8R8G8B8 read keeps it too"""
+    im, levels = image.convert("RGBA"), []
+    while True:
+        raw = bytearray(im.tobytes("raw", "BGRA"))
+        if not levels:
+            stream = marker + bytes(-len(marker) % 3)
+            if len(stream) // 3 > im.width:
+                raise SystemExit(f"error: the counter texture is {im.width} wide; the marker needs {len(stream) // 3}")
+            for i in range(len(stream) // 3):
+                raw[4 * i : 4 * i + 4] = stream[3 * i : 3 * i + 3] + b"\xff"
+        levels.append(xbt.swizzle(bytes(raw), im.width, im.height, 4))
+        if im.size == (1, 1):
+            break
+        im = im.resize((max(1, im.width // 2), max(1, im.height // 2)), Image.BOX)
+    data = b"".join(levels)
+    return xbt.MAGIC + struct.pack("<7I", image.width, image.height, len(data), A8R8G8B8, len(levels), 1, 0) + data
+
+
+def counter_texture_path(spec, model_name):
+    """the counter texture's path in the archive (as the model names it) and its flat normal map's"""
+    rel = spec.get("texture") or str(Path(model_name).with_name(Path(model_name).stem + "_counter.xbt"))
+    rel = rel.replace("/", "\\").lstrip("\\")
+    return "\\" + rel, "\\" + rel[: -len(".xbt")] + "_nt.xbt"
+
+
 # --- the weapon -----------------------------------------------------------------------------------------
 
 
@@ -532,6 +775,7 @@ PER_MODEL = (
     "double_sided",
     "template",
     "out",
+    "counter",
 )
 
 
@@ -551,19 +795,24 @@ def build(cfg, base):
         )
         if skey not in sources:
             sources[skey] = source(mcfg, base)
-        gltf, prims = sources[skey][:2]
+        gltf, prims, piece, boxes = sources[skey][:4]
         overrides = {k.lower(): v for k, v in cfg.get("materials", {}).items()}
+        # a counter's display triangles (its "groups") go to a texture of their own, not into the atlas
+        counter = counter_groups(mcfg["counter"], gltf, prims, piece, boxes) if mcfg.get("counter") else ({}, {})
+        materials = sorted(
+            {p["material"] for k, p in enumerate(prims) if any((k, j) not in counter[0] for j in range(len(p["tris"])))}
+        )
         key = (
             skey,
             tex.get("size", 1024),
             tuple(tex.get("gloss", (120, 225))),
             tex.get("normal_y", "up"),
             tex.get("gain", 1.0),
+            tuple(materials),
         )
         if key not in atlases:
-            materials = sorted({p["material"] for p in prims})
             atlases[key] = atlas(gltf, materials, key[1], key[2], key[3] == "up", key[4], overrides, tiles(prims))
-        build_model(mcfg, mc["model"], base, *sources[skey][1:], atlases[key])
+        build_model(mcfg, mc["model"], base, *sources[skey][1:], atlases[key], gltf=gltf, tex=tex, counter=counter)
 
 
 def placeholder(verts, tris):
@@ -585,12 +834,23 @@ def position_scale(setting, meshes):
     return k / 32767
 
 
-def build_model(cfg, name, base, prims, piece, boxes, fr, maps):
+def build_model(cfg, name, base, prims, piece, boxes, fr, maps, gltf=None, tex=None, counter=({}, {})):
     """one model of the config: the template's .xbg with the glTF on its bones, and its textures"""
     diffuse, normal, place = maps
     folder = base / cfg["template"]
     template = (folder / name).read_bytes()
     model = xbg.Model(template)
+    spec = cfg.get("counter")
+    taken, counter_sm = {}, None
+    if spec:  # the display's triangles on a material and texture of their own, after the frame's submeshes
+        taken, cbounds = counter
+        cmaps, crops = counter_mapping(spec, gltf, prims, taken, cbounds)
+        counter_paths = counter_texture_path(spec, name)
+        main = max(model.submeshes, key=lambda sm: len(xbg.strip_triangles(sm.strip)))
+        template, cmat = xbg.add_material(template, main.material, counter_paths)
+        template = xbg.add_submesh(template, model.parts.index(model.part_of(main)), cmat, main.stride)
+        model = xbg.Model(template)
+        counter_sm = next(sm.index for sm in model.submeshes if sm.material == cmat)
     names = [b.name.lower() for b in model.bones]
     for bone in [*cfg.get("parts", {}), *([cfg["frame"]] if "frame" in cfg else [])]:
         if bone.lower() not in names:
@@ -639,9 +899,13 @@ def build_model(cfg, name, base, prims, piece, boxes, fr, maps):
     frame_of = {bone: model.bone_matrix(bone) for bone in target}
     dropped = 0
     for k, (p, ids, f) in enumerate(zip(prims, piece, fr)):
-        u0, v0, s, fu, fv, nu, nv = place[p["material"]]
+        u0, v0, s, fu, fv, nu, nv = place.get(p["material"], (0, 0, 0, 0, 0, 1, 1))  # none: all the counter's
         remap = {}
-        for tri, n in zip(p["tris"], ids):
+        for j, (tri, n) in enumerate(zip(p["tris"], ids)):
+            g = taken.get((k, j))
+            if g is not None:  # the counter's display: its submesh on the frame, its own texture coordinates
+                counter_vertices(meshes[counter_sm], tri, p, f, frame_of[frame], turn, cfg, cmaps[g], remap, g)
+                continue
             bone = owner_of(k, n)
             if bone is None:
                 dropped += 1
@@ -703,6 +967,10 @@ def build_model(cfg, name, base, prims, piece, boxes, fr, maps):
             f = out / path
             f.parent.mkdir(parents=True, exist_ok=True)
             f.write_bytes(data)
+    if spec:
+        counter_paths = [t.lstrip("\\").replace("\\", "/").lower() for t in counter_paths]
+        write_counter(spec, gltf, crops, cmaps, tex or {}, outs, counter_paths, base)
+        written += [(path, None) for path in counter_paths]
     new = xbg.Model(rebuilt)
     kept = sorted(set(paths) - {path for path, _ in written})
     print(f"{name}: {dropped} triangles left out, position scale {new.scale:.6g}")
@@ -717,6 +985,60 @@ def build_model(cfg, name, base, prims, piece, boxes, fr, maps):
 
 def transpose(m):
     return tuple(tuple(m[j][i] for j in range(3)) for i in range(3))
+
+
+def counter_vertices(mesh, tri, p, f, frame, turn, cfg, to_counter, remap, g):
+    """a display triangle into the counter's submesh: placed on the frame bone as the rest of the weapon, its
+    texture coordinates in the counter texture"""
+    verts, tris = mesh
+    rot, pos = frame
+    back = transpose(rot)
+    dirs = xbg.mat_mul(back, turn)
+    scale, src, dst = cfg["scale"], cfg["anchor"]["source"], cfg["anchor"]["target"]
+    out = []
+    for i in tri:
+        key = ("counter", g, i)
+        if key not in remap:
+            world = xbg.add(dst, xbg.mat_vec(turn, tuple((c - s) * scale for c, s in zip(p["pos"][i], src))))
+            verts.append(
+                {
+                    "pos": xbg.mat_vec(back, sub(world, pos)),
+                    "uv": to_counter(*p["uv"][i]),
+                    "normal": xbg.mat_vec(dirs, p["normal"][i]),
+                    "tangent": xbg.mat_vec(dirs, f[i][0]),
+                    "binormal": xbg.mat_vec(dirs, f[i][1]),
+                }
+            )
+            remap[key] = len(verts) - 1
+        out.append(remap[key])
+    a, b, c = out
+    tris.append((a, c, b))  # the games' front faces turn the other way
+
+
+def write_counter(spec, gltf, crops, cmaps, tex, outs, paths, base):
+    """the counter texture (its picture, the erased boxes, the marker) and its flat normal map; with
+    "preview", the picture as a PNG with the digit and compass boxes outlined"""
+    erase = [counter_fractions(b, spec, cmaps) for b in spec.get("erase", ())]
+    image = counter_image(spec, gltf, crops, tex, tex.get("gain", 1.0), tex.get("normal_y", "up") == "up", erase)
+    marker, digits, compass = counter_marker(spec, cmaps)
+    files = (counter_xbt(image, marker), dxt_xbt(Image.new("RGB", (4, 4), (128, 128, 255)), DXT1))
+    for out in outs:
+        for path, data in zip(paths, files):
+            target = out / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+    print(f"  counter texture {paths[0]}: {image.width} x {image.height}, digits {digits}, compass {compass}")
+    if spec.get("preview"):
+        from PIL import ImageDraw  # noqa: PLC0415
+
+        im = image.convert("RGB").resize((image.width * 4, image.height * 4), Image.NEAREST)
+        draw = ImageDraw.Draw(im)
+        for box in (*digits, compass):
+            if box[2] > box[0]:
+                draw.rectangle([4 * c for c in box], outline=(255, 60, 60))
+        target = base / spec["preview"]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        im.save(target)
 
 
 def info(cfg, base):

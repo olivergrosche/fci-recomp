@@ -43,6 +43,7 @@ void fci_overlay_init(HWND hwnd);  // FCI: the context, font and window input fo
 #include "gpu/shaders.h"
 #include "gpu/texture.h"
 #include "gpu/vertex.h"
+#include "fci_counter.h"  // FCI: the Halo rifles' counter displays
 #include "kernel/kernel.h"
 
 using Microsoft::WRL::ComPtr;
@@ -339,6 +340,7 @@ struct Tex {
     uint64_t frame = 0;
     uint64_t palette = 0;  // hash of the colours a P8 texture was decoded with
     uint8_t flags = 0;  // Extension::Decoded's
+    std::shared_ptr<fci_counter::Display> counter;  // FCI: level 0 carried the counter marker (fci_counter.h)
 };
 
 struct PsoKey {
@@ -523,6 +525,7 @@ private:
     void UploadTexture(Tex& tx, const TextureDesc& d, const FormatInfo& fi, const uint8_t* p, const uint32_t* colours,
                        bool same);
     void UploadTextureLevel(Tex& tx, uint32_t f, uint32_t l, const std::vector<uint8_t>& px, uint32_t pitch);
+    void UpdateCounter(Tex& tx);  // FCI: a counter display drawn anew when the game's state changed
     void EnsurePixelShader(const PixelKey& pk, DrawShaders& sh);
     void BuildPipelineKey(const State& s, const Assembled& a, uint64_t vh, uint64_t ph, PsoKey& k);
     void KeyDepthStencil(const State& s, const Assembled& a, PsoKey& k);
@@ -2031,10 +2034,29 @@ void D3D12Backend::UploadTexture(Tex& tx, const TextureDesc& d, const FormatInfo
         for (uint32_t l = 0; l < tx.levels; l++) {
             uint32_t pitch;
             DecodeLevel(d, l, f, p, colours, px, pitch);
+            // FCI: a counter display's marker (tools/weapon_import.py "counter"): only plain 2D colour textures
+            if (f == 0 && l == 0)
+                tx.counter = fi.host == Host::BGRA8 && !d.cube && d.depth == 1 && !fi.depth
+                                     ? fci_counter::Detect(px.data(), d.width, d.height, pitch)
+                                     : nullptr;
+            if (f == 0 && l == 0 && tx.counter)
+                LOGI("d3d12: a counter display, %ux%u at %08x", d.width, d.height, d.data);
             if (ext_) ext_->Decoded(d, fi, f, l, px, pitch, tx.flags);
             UploadTextureLevel(tx, f, l, px, pitch);
         }
     }
+    Transition(tx.res.Get(), st, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+}
+
+// FCI: a counter display (fci_counter.cpp) once a frame: the rounds and the needle drawn in when they changed, every
+// level uploaded in this frame's list, as a guest texture the title wrote to; frame replay executes the copies again
+void D3D12Backend::UpdateCounter(Tex& tx) {
+    std::vector<std::vector<uint8_t>> levels;
+    if (!fci_counter::Update(*tx.counter, presents_, tx.levels, levels)) return;
+    D3D12_RESOURCE_STATES st = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    Transition(tx.res.Get(), st, D3D12_RESOURCE_STATE_COPY_DEST);
+    for (uint32_t l = 0; l < levels.size(); l++)
+        UploadTextureLevel(tx, 0, l, levels[l], std::max(tx.d.width >> l, 1u) * 4);
     Transition(tx.res.Get(), st, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 }
 
@@ -2100,6 +2122,7 @@ ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const 
             UploadTexture(tx, d, fi, p, palette.va ? palette.colours : nullptr, same);
         }
     }
+    if (tx.counter) UpdateCounter(tx);  // FCI: a Halo rifle's counter display
     FillTextureView(tx, d, stages.sv[stage]);
     if (fi.depth) info.shadow = ShadowDepthKind(d.format);
     if (ext_) ext_->Sampled(d, nullptr, tx.flags, info);

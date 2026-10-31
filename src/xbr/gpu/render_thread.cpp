@@ -28,6 +28,7 @@
 #include "gpu/backend.h"
 #include "kernel/kernel.h"
 #include "kernel/memory.h"
+#include "fci_counter.h"  // FCI: the title's presents, for the counter displays
 
 namespace gpu {
 
@@ -193,6 +194,7 @@ public:
         cur_->cmds.push_back(c);
         Use(front.header);
         uint64_t id = Submit();
+        fci_counter::NotePresent();  // FCI: the frame the title records next (fci_counter.h)
         g_perf_capture_ns += Ns(t);
         // the title records one frame while the one before it draws
         Wait(last_present_, WaitFor::Frame, nullptr);

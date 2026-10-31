@@ -506,6 +506,103 @@ def rebuild(template, meshes, scale=None):
     return bytes(b[: m.data]) + bytes(data) + template[u32(template, H_TAIL) :]
 
 
+# the header's block offsets (the first of each pair; 0 and -1 for none)
+OFFSETS = (
+    H_MATERIALS,
+    H_TEXTURES,
+    H_BONES,
+    H_SKIN,
+    H_PART_INDEX,
+    H_PARTS,
+    H_SUBMESHES,
+    H_DATA,
+    H_RAGDOLL,
+    H_TAIL,
+    H_STRINGS,
+)
+
+
+def insert(b, at, chunk):
+    """b with chunk inserted at offset at: every block the header places at or after at moves along"""
+    out = bytearray(b[:at]) + chunk + b[at:]
+    for h in OFFSETS:
+        v = u32(out, h)
+        if v not in (0, 0xFFFFFFFF) and v >= at:
+            struct.pack_into("<I", out, h, v + len(chunk))
+    return out
+
+
+def add_material(b, like, paths):
+    """a rigid model with one more material, a copy of material like whose diffuse and bump textures are new
+    ones named paths (diffuse, bump); returns (the model, the material's number). The paths go after the
+    texture paths in the string table and the names after them move along; every block keeps its 16-byte
+    alignment."""
+    m = Model(b)
+    if m.skinned or m.skin_matrices or u32(b, H_RAGDOLL + 4):
+        raise ValueError("only a rigid model takes a new material")
+    out = bytearray(b)
+    first = len(m.textures)
+    material = bytearray(b[m.materials[like].at : m.materials[like].at + MATERIAL])
+    struct.pack_into("<i", material, 0x0C, first)
+    struct.pack_into("<i", material, 0x14, first + 1)
+    at, n = u32(out, H_MATERIALS), u32(out, H_MATERIALS + 4)
+    out = insert(out, at + n * MATERIAL, material)  # 0x30: the alignment holds
+    struct.pack_into("<I", out, H_MATERIALS + 4, n + 1)
+    strings, size = u32(out, H_STRINGS), u32(out, H_STRINGS + 4)
+    names = b"".join(p.encode("latin-1") + b"\0" for p in paths)
+    names += bytes(-len(names) % 16)
+    entries, offset = bytearray(), size
+    for p in paths:
+        entries += struct.pack("<2I", offset, 0)
+        offset += len(p) + 1
+    entries += b"\xcd" * (-len(entries) % 16)
+    at, n = u32(out, H_TEXTURES), u32(out, H_TEXTURES + 4)
+    out = insert(out, at + 8 * n, entries)
+    struct.pack_into("<I", out, H_TEXTURES + 4, n + len(paths))
+    strings = u32(out, H_STRINGS)
+    out = insert(out, strings + size, names)
+    struct.pack_into("<I", out, H_STRINGS + 4, size + len(names))
+    # names past the texture paths: the bones' (u16 at +0x3E) and the parts' (+0x24)
+    at, n = u32(out, H_BONES), u32(out, H_BONES + 4)
+    for i in range(n):
+        name = at + 4 + i * BONE + 0x3E
+        v = struct.unpack_from("<H", out, name)[0]
+        if v >= size:
+            struct.pack_into("<H", out, name, v + len(names))
+    at, n = u32(out, H_PARTS), u32(out, H_PARTS + 4)
+    for i in range(n):
+        v = u32(out, at + i * PART + 0x24)
+        if v >= size:
+            struct.pack_into("<I", out, at + i * PART + 0x24, v + len(names))
+    return bytes(out), len(m.materials)
+
+
+def add_submesh(b, part, material, stride):
+    """a rigid model with an empty submesh (material, vertices of stride bytes) after part's last one; rebuild
+    fills it. The submesh table grows, the data moves to the next 16-byte boundary at least 4 bytes after it
+    (as in the games' models), and the parts after it start one submesh later."""
+    m = Model(b)
+    p = m.parts[part]
+    k = p.first + p.count
+    table = u32(b, H_SUBMESHES)
+    tag = m.materials[material].shader & 0xFFFF
+    entry = struct.pack("<5I", SUBMESH_TAG << 16 | material, 0, 0, stride << 16, tag << 16) + b"\xff" * 8 + bytes(8)
+    old = bytes(b[table : table + SUBMESH * len(m.submeshes)])
+    new = old[: k * SUBMESH] + entry + old[k * SUBMESH :]
+    data_old = m.data
+    data_new = align(table + len(new) + 4, 16)
+    out = bytearray(b[:table]) + new + b"\xcd" * (data_new - table - len(new)) + b[data_old:]
+    delta = data_new - data_old
+    for h in (H_DATA, H_TAIL):
+        struct.pack_into("<I", out, h, u32(out, h) + delta)
+    for i, q in enumerate(m.parts):
+        if i == part:
+            struct.pack_into("<I", out, q.at + 0x10, (q.count + 1) << 16 | u32(b, q.at + 0x10) & 0xFFFF)
+        elif q.first >= k:
+            struct.pack_into("<I", out, q.at + 4, q.first + 1)
+    return bytes(out)
+
+
 def split_by_bones(vertices, triangles, limit=PALETTE):
     """[(bones, triangles)]: the triangles in groups whose vertices use at most limit bones together
     (greedy, triangles with the same bones next to each other)"""

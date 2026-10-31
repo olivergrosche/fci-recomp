@@ -167,3 +167,46 @@ was put on the MP5's (centre about (0.082, 0.034, 0) in the frame), 2.2 mm per g
 length and handguard then land on the MP5's. 26,114 of its 36,400 triangles are cartridges inside the
 magazine and the chamber and are left out; it has no separate magazine, so `b_Magazine` and `b_Slide`
 get a placeholder triangle.
+
+## Counter displays (tools/weapon_import.py "counter", src/xbr/fci_counter.cpp)
+
+A Halo rifle's display (the rounds in the magazine and a compass) is drawn by the renderer into a texture of its
+own (2026-10-30). The importer gives the display's triangles their own material and texture:
+
+- **Model.** `xbg.add_material` puts a copy of the weapon's material after the others, its diffuse and bump
+  textures two new paths (the texture list grows by two entries, the paths go after the texture paths in the
+  string table, the bones' and parts' name offsets move along; every block keeps its 16-byte alignment).
+  `xbg.add_submesh` adds an empty submesh with it after the frame part's submeshes (the table grows, the data
+  moves to the next 16-byte boundary at least 4 bytes after it, the later parts start one submesh later);
+  `rebuild` fills it. The games load the new textures from `weaponpack` like the others (the mod menu's merge
+  adds files an archive lacks).
+- **Triangles.** The config's groups pick them (glTF materials, pieces as in `drop`, triangles `within` a box,
+  texture coordinates inside `uv`). A `crop` group keeps its look: its texture coordinates' region of its
+  material's maps (base colour plus emission, as the atlas) becomes the texture, `flip` turning it upright; a
+  `rect` group's coordinates are spread over a rectangle of the texture on a plain background (Halo's separate
+  digit and compass quads). Materials only the display uses stay out of the atlas, so the rest of the weapon
+  and every other mod build byte for byte as before.
+- **Texture.** A8R8G8B8 (the .xbt format 0x0C, swizzled), all levels to 1 x 1, alpha the gloss; `erase` boxes
+  paint the old marks out at the source's resolution (what stands out bright from the box's median, filled from
+  the texels around it). Its flat normal map is a 4 x 4 DXT1. Row 0 of level 0 carries the marker in the blue,
+  green and red bytes of its first 18 texels (alpha 255, so an X8R8G8B8 read keeps it): `FCIC`, version 1,
+  flags (1 compass, 2 digits), the tens', ones' and compass's boxes (4 x u16 texels each), the digits' fill and
+  edge, the compass's edge and fill, the glow and its strength, the edge width (1/16 texel), the glow's reach
+  (1/4 texel), a segment's thickness and gap (/255 of the digit's width), `CTR1`.
+
+The renderer (d3d12.cpp, marked FCI) looks for the marker when it decodes a plain colour texture's level 0 for
+upload (four bytes compared otherwise), keeps that level with row 0 replaced by row 1, and when it binds the
+texture, once a frame, asks the game code's state for the frame it draws (src/fci_counter.c,
+re/notes/WEAPONS.md): when the rounds or the needle (to a tenth of a degree) changed it draws the boxes anew
+from the kept level (seven-segment digits and a ring with a pointer to the north, each a distance field with a
+fill, a bright edge and a glow, Halo CE's assault rifle's colours by default), box-filters the levels below
+and uploads them in the frame's command list, as a guest texture the title wrote to. Frame replay executes those
+copies again with the frame, so a replayed picture shows its frame's digits. Nothing else changes for a
+texture without the marker; nothing runs while no counter texture is drawn.
+
+Checked in game (the user's options, frame replay at 60): the MA5B on the MP5 (both games) and on the M4
+(Evolution), the Halo CE assault rifle on the M16 (Evolution) and, built onto the MP5 for the user's save, in
+Instincts. The digits match the HUD's number in every capture (shots, reloads, a switch to the pistol and back),
+the needle turns with the view and agrees with the HUD's compass strip, and in a dump of every picture shown
+during a burst of fire (RECOMP_FCI_XBR_REPLAY_DUMP) the replayed pictures show their frames' digits. Not seen in
+game: the Instincts M4 and M16 builds (no save with those weapons; the same configs as Evolution's).

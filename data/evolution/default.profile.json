@@ -97,10 +97,24 @@
     "sub_0012D981": [
       "prehook",
       "called by the movement handler 0012C298 (ebx = vehicle): RECOMP_FCI_VEHTRACE (fci_vehdiag.c)"
+    ],
+    "sub_0013598A": [
+      "prehook",
+      "the HUD's counter beside the bullet icon ([esp+4] = the rounds in the magazine, [esp+8] the text, ebx = HUD; ret 8), Instincts' 001A9480: kind 4 of the HUD's set-value 00135D07, which the HUD's update 00137981 calls each frame: the Halo rifles' counter displays (fci_counter.c, re/notes/WEAPONS.md)",
+      "001A9480"
+    ],
+    "sub_00136799": [
+      "prehook",
+      "the HUD's compass strip (eax = HUD, [esp+4] = yaw + 90; adds the HUD's +0x328, which Game.SetCompassOffset sets at 000907E8), Instincts' 001AA440, called by the HUD's update (00137D4E): north for the Halo rifles' compass (fci_counter.c, re/notes/WEAPONS.md)",
+      "001AA440"
     ]
   },
   "evidence": "Exploratory Evolution profile: descriptor helper by masked bytes (unique match); code end = BINKDATA end (as Instincts' 0070C6E4).",
   "constants": {
+    "FCI_HUD_COMPASS_OFFSET": [
+      "0x00000328",
+      "the HUD's compass offset in degrees: Game.SetCompassOffset writes it (000907E8), the compass strip 00136799 adds it to yaw + 90; Instincts' +0x2A4 (000B8AAA, 001AA440)"
+    ],
     "FCI_GAMEVIEW_INPUT": [
       "0x000008C8",
       "the view's ViewInput block: Camera_BuildViews passes view+0x8C8 to Player_ProcessInput (000B9056)"

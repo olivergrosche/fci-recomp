@@ -171,6 +171,17 @@ REPLACE = {
         "RECOMP_FCI_SKIP_MOVIES skip listed movies as if they had played (fci_disk.c, "
         "re/notes/MOVIES.md)",
     ),
+    "sub_001A9480": (
+        "prehook",
+        "the HUD's counter beside the bullet icon ([esp+4] = the rounds in the magazine, esi = HUD; ret 4), "
+        "set each frame by the HUD's update 001AB430: the Halo rifles' counter displays (fci_counter.c, "
+        "re/notes/WEAPONS.md)",
+    ),
+    "sub_001AA440": (
+        "prehook",
+        "the HUD's compass strip (eax = HUD, [esp+4] = yaw + 90; adds the HUD's +0x2A4, Game.SetCompassOffset): "
+        "north for the Halo rifles' compass (fci_counter.c, re/notes/WEAPONS.md)",
+    ),
 }
 
 STUB = re.compile(rb"void (sub_([0-9A-F]{8}))\(void\) \{ g_esp \+= 4; /\* 0x[0-9A-F]{8}: not detected \*/ \}")

@@ -127,3 +127,49 @@ script does not set is added by code right after its table's NEWTABLE (registers
 stack size grows when needed). Paths go from the weapon's table (`FireParams[*].MuzzleLight.color`). `patch`
 reads every written file back and stops when anything else differs; `diff` shows what a mod's scripts change.
 The Halo weapon mods use it (fci-modsrc `halo/weapons`, `"lua"` in their configs).
+
+# The magazine count and the heading (src/fci_counter.c)
+
+Found 2026-10-30 from both games' HUD code (the `CryInGame_Hud` page's element names in `.rdata` and their
+references) and checked in game against the HUD. The Halo rifles' displays (MODELS.md "Counter displays") show
+both.
+
+## The rounds in the magazine
+
+The HUD's update (Instincts 001AB430, Evolution 00137981, once a frame in play) sets each of its counters
+through a set-value function by kind (Instincts 001A9850, Evolution 00135D07: thiscall, HUD; the player, the
+kind, the value, the maximum, a flag; a jump table by kind). Kind 4 is `t_counter1` of `ai_bullet`, the number
+beside the bullet icon: Instincts 001A9480 (esi = HUD, [esp+4] = the number, ebx = its text; ret 4), Evolution
+0013598A (ebx = HUD, [esp+4] = the number, [esp+8] the text; ret 8). Both compare the number with the shown
+one (HUD +0x3A4, Evolution +0x43C) and only then change the text, so a prehook sees the number every frame.
+Kind 6 is the magazines beside it (`ai_mag`), kind 5 the second gun's rounds when akimbo.
+
+The number: the player's ammunition state (player +0x36C) at +0x18 + 4 * the fire mode (player +0x18C),
+capped at the clip's size (the fire mode's +0x24 in the weapon's table); 0 for a weapon without rounds.
+The script function `GetCurrentAmmoInClip` (000C5B00) reads the same state: +0x10 for its argument 1, +0x18
+for 2 (kind 5, the akimbo count, shows +0x10). Checked by captures: the hook's number is the HUD's in every
+frame, through shots, reloads and (Instincts) a switch to the pistol and back (Instincts 02_Native from the
+user's save; Evolution 21_DUNEA with the M4).
+
+## The heading
+
+The HUD's compass strip (`ai_compass`, an animation of 160 frames for 360 degrees) is set by Instincts
+001AA440 / Evolution 00136799 (eax = HUD, [esp+4] = the player's yaw + 90): it adds the HUD's compass offset
+(Instincts +0x2A4, Evolution +0x328; 0 from the constructor, `Game.SetCompassOffset(degrees)` sets it,
+000B8AAA / 000907E8), wraps to 0..360 and shows frame value * 4/9; value 0 is north. With the yaw falling to
+the right (INPUT-CAMERA.md), the strip's middle is the bearing -(yaw + 90 + offset). Instincts' 02_Native sets
+an offset of -90 (read from the HUD in play), so there the bearing is -yaw: at the user's save's start (yaw
+-69.1) E stands just right of the middle, 30 and 60 degrees to the right put it left of it, 60 to the left of
+the start brings N just left of the middle. A needle that left the offset (and the 90) out was off in both games
+(02_Native by 90 degrees); with them it agrees with the strip in 02_Native and in Evolution's 21_DUNEA.
+
+fci_counter.c takes the yaw from Player_ProcessInput's prehook (fci_aim.c: the block's angles minus this
+frame's turnYaw, the yaw the camera of this frame gets) and the offset from a prehook on the strip's function.
+
+## Frames
+
+The renderer runs up to a frame behind the game code (xbr/gpu/render_thread.cpp: the title records a frame
+while the one before draws). Read when the renderer draws, the number was a frame early (a capture showed 28
+on the gun beside the HUD's 29). Each value is now kept with the title's count of presents at the time
+(xbr/fci_counter.cpp `NotePresent`, in the threaded backend's Present), and the renderer reads the state of the
+present count it draws: the gun and the HUD change in the same picture.
