@@ -5,6 +5,8 @@
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <cstdio>
+#include <cstdlib>
 #include <deque>
 #include <map>
 #include <vector>
@@ -625,6 +627,15 @@ BUFFER(SetBufferData, 3) {
     return 0;
 }
 BUFFER(Play, 4) {
+    // RECOMP_FCI_SOUND_LOG: each buffer that starts, its rate, size and first 16 bytes, so that a sound of a
+    // bank can be told by its bytes (re/notes/SOUNDS.md, "Voice by model")
+    static const bool log = std::getenv("RECOMP_FCI_SOUND_LOG") != nullptr;
+    if (log && v.data && v.bytes >= 16) {
+        const uint8_t* p = static_cast<const uint8_t*>(HostPtr(v.data + v.play_start));
+        std::fprintf(stderr, "[FCI] sound: play %u Hz %u bytes ", v.rate, v.play_len);
+        for (int i = 0; i < 16; i++) std::fprintf(stderr, "%02x", p[i]);
+        std::fprintf(stderr, "\n");
+    }
     v.playing = true;
     v.looping = a[3] & 1;
     if (a[3] & 2) v.pos = 0;

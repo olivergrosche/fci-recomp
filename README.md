@@ -121,6 +121,22 @@ library's, and of two mods that add the same name the later one wins. Scripts na
 with any of the game's groups (`GFX_Muzzleflash.Halo_FX.PlasmaPistol_Impact`; re/notes/WEAPONS.md, "Effect
 hooks"). Such a level's merged copy is made the first time the game opens it.
 
+A mod can also change the entities of every level's mission (`levels\<level>\mission_mission0.xml`) without
+replacing it: `mods\<mod>\mission-patch\*.xml` holds rules such as
+
+```xml
+<MissionPatch>
+	<Entity Archetype="FC15_EnemyArchetypeLibrary.Pirate1.Scout" SoundPack="halogruntpirates" />
+</MissionPatch>
+```
+
+Every entity whose creature type (`tplCreatureType`) is the archetype gets the rule's other attributes,
+wherever its elements have that attribute with a value (an empty one stays empty, a missing one is not
+added). The rules of all switched-on mods apply, also on top of a mod that replaces the mission, so mods that
+patch the same levels are no alternatives in the menu; of two rules for the same archetype and attribute
+the later mod's wins. The Halo character mods use it to give their enemies their creature's voice
+(re/notes/SOUNDS.md, "Voice by model").
+
 In the game, the MODS entry of the main menu (below CHEATS MENU) and of the pause menu (in place of
 FRIENDS LIST, which needs Xbox Live), there with or without mods, F1 or Insert (`mods-menu-key` in
 `fci.ini`) or both sticks of a controller pressed together open the mod menu, which switches mods on and
