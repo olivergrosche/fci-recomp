@@ -283,6 +283,34 @@ def test_a_cache_encodes_each_sound_once_and_changes_nothing(sample, monkeypatch
     assert len(calls) == 3
 
 
+def test_sounds_can_be_stretches_of_one_tape(sample):
+    b, _ = sample
+    bank = sb.Bank(b)
+    tape = sine(600, 500)  # 10 blocks once padded
+    new = sb.Bank(sb.replace(bank, {}, windows={1: (RATE, tape, 128, 256), 2: (RATE, tape, 0, 640)}))
+    a, c = new.audio(1), new.audio(2)
+    assert len(new.data) == 3 * 36 + 10 * 36  # the loops' data and the tape, once
+    assert c.offset == a.offset - 2 * 36 and (a.size, c.size) == (4 * 36, 10 * 36)
+    assert (a.samples, a.samples_bytes, a.rate, c.samples) == (256, 4 * 36, RATE, 640)
+    assert not c.streamed and c.channels == 1
+    whole = sb.decode(new, 2)[1][0]
+    assert sb.decode(new, 1)[1][0] == whole[128:384]  # every block decodes on its own
+    assert snr(sb.to_int16(tape), whole[:600]) > 25
+    for i in (4, 5):  # the loops keep their data
+        assert new.internal_bytes(new.audio(i)) == bank.internal_bytes(bank.audio(i))
+    with pytest.raises(ValueError):
+        sb.replace(bank, {}, windows={1: (RATE, tape, 100, 256)})  # not on a block
+    with pytest.raises(ValueError):
+        sb.replace(bank, {}, windows={1: (RATE, tape, 512, 256)})  # past the tape's end
+    with pytest.raises(ValueError):
+        sb.replace(bank, {}, windows={4: (RATE, tape, 0, 256)})  # a loop
+    # with sounds of their own beside them, and the cache encoding the tape once for another bank
+    cache = {}
+    one = sb.replace(bank, {4: (RATE, [sine(640, 300)], None)}, cache=cache, windows={1: (RATE, tape, 0, 64)})
+    assert sb.replace(sb.Bank(b), {4: (RATE, [sine(640, 300)], None)}, windows={1: (RATE, tape, 0, 64)}) == one
+    assert ("tape", RATE, tuple(tape)) in cache
+
+
 def test_dialogue_banks_are_named_by_language(sample, tmp_path):
     b, game = sample
     dat, fat = dat2.build({sb.bank_hash("english/voices_test"): b, sb.bank_hash("weapons_test"): b})

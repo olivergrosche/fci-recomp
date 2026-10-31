@@ -521,13 +521,28 @@ def in_hardware_part(bank):
             yield i, a
 
 
-def replace(bank, sounds, keep_rate=False, match_level=False, game=None, language="English", cache=None):
+def replace(bank, sounds, keep_rate=False, match_level=False, game=None, language="English", cache=None, windows=None):
     """the bank with {resource index: (rate, [samples of each channel], loop start or None)} in place of
     those audio resources, each put into the bank's hardware part (a streamed one too, then mono).
     cache: a dict that keeps the encoded sounds, so that a WAV given for many sounds, or for the sounds of
-    other banks given the same dict (a dialogue bank's languages), is encoded once"""
+    other banks given the same dict (a dialogue bank's languages), is encoded once.
+    windows: {resource index: (rate, mono samples, start, frames)}: the sound is `frames` samples of that tape
+    from `start` (both whole Xbox ADPCM blocks, whose every block decodes on its own); a tape is encoded and
+    stored once, so all sounds that are stretches of it share its data (not for loops)"""
     new = {}
     cache = {} if cache is None else cache
+    for i, (rate, tape, start, frames) in (windows or {}).items():
+        a = bank.audio(i)
+        if a is None or a.loop:
+            raise ValueError(f"resource {bank.rid(i):#x} is not a sound that plays once")
+        n = -(-len(tape) // BLOCK_SAMPLES) * BLOCK_SAMPLES
+        if start % BLOCK_SAMPLES or frames % BLOCK_SAMPLES or frames <= 0 or start < 0 or start + frames > n:
+            raise ValueError(f"resource {bank.rid(i):#x}: a window of {frames} from {start} in a tape of {n}")
+        key = ("tape", rate, tuple(tape))
+        if key not in cache:
+            cache[key] = adpcm_encode([to_int16(list(tape) + [0.0] * (n - len(tape)))])
+        b = cache[key]
+        new[i] = (b, frames, 0, rate, start // BLOCK_SAMPLES * BLOCK, frames // BLOCK_SAMPLES * BLOCK)
     for i, (rate, channels_samples, loop_start) in sounds.items():
         a = bank.audio(i)
         if a is None:
@@ -542,7 +557,8 @@ def replace(bank, sounds, keep_rate=False, match_level=False, game=None, languag
         key = (rate, tuple(map(tuple, channels_samples)), loop_start, keep_rate, level, a.rate, a.loop)
         if key not in cache:
             cache[key] = encode_for(a, rate, channels_samples, loop_start, keep_rate, level)
-        new[i] = cache[key]
+        b, frames, intro, target = cache[key]
+        new[i] = (b, frames, intro, target, 0, len(b))
     if not new:
         return bank.build()
     out = Bank(bank.build())
@@ -555,20 +571,20 @@ def replace(bank, sounds, keep_rate=False, match_level=False, game=None, languag
         at[(off, size)] = len(part)
         part += old[off : off + size]
     placed = {}
-    for i, (b, frames, intro, rate) in new.items():
+    for i, (b, frames, intro, rate, off, size) in new.items():
         if b not in placed:
             placed[b] = len(part)
             part += b
         a = Audio(out.resources[i])
         bps = rate * BLOCK // BLOCK_SAMPLES  # mono
         flags = a.flags & ~STREAM_ONLY
-        fields = dict(size=len(b), offset=placed[b], flags=flags, rate=rate, bits=16, channels=1)
+        fields = dict(size=size, offset=placed[b] + off, flags=flags, rate=rate, bits=16, channels=1)
         fields.update(stream_type=XBOX_ADPCM, name=NO_NAME, bytes_per_second=bps)
         if a.loop:
             ib = intro // BLOCK_SAMPLES * BLOCK
             fields.update(samples=intro, samples_bytes=ib, loop_samples=frames - intro, loop_bytes=len(b) - ib)
         else:
-            fields.update(samples=frames, samples_bytes=len(b), loop_samples=0, loop_bytes=0)
+            fields.update(samples=frames, samples_bytes=size, loop_samples=0, loop_bytes=0)
         a.set(**fields)
         out.resources[i][:] = a.raw
     for i, a in in_hardware_part(bank):

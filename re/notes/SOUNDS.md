@@ -224,6 +224,41 @@ INVESTIGATE, DIE_SCREAM, DIE_180_SCREAM (Sapper), ENRAGED, PUNCH_FORWARD/BACKWAR
 (Chucker); the sapper's `ExplosionEvent`. Their other events (footsteps, attacks) are played from the
 animations; not identified.
 
+### Conversations
+
+Found 2026-10-31 from both games' mission XML. The enemies' conversations are AI anchors: an
+`<Object Type="AIAnchor" Name="..." NextAnchor="...">` holds `<Say>` steps, each with a
+`<PlaySound ID="13697030" Wait="1"/>` (the next step waits for the line to end; `TimeShift` delays a step):
+
+    <Say><PlaySound ID="13697030" Wait="1" /></Say>                          the anchor's user speaks
+    <Say Target="Merc_Beginning_8_a" TimeShift="0.3"><PlaySound ID="13697032" Wait="1" /></Say>
+
+A PlaySound outside a Say is the anchor's user's as well. An anchor's users are the entities naming it
+(`FirstAnchor`, `OnPlayerSeenAnchor`, a spawn spot's `FirstAnchor1`), reaching it by other anchors'
+`NextAnchor`, or sent to it by a trigger (`<EventTarget Target="<EntityId>" Event="SwitchToGenericJob"
+ExtraParam="AIAnchor_...">`); a speaker's model is in the level's dependency list, its pack in its entity.
+The lines played this way:
+
+| Banks | Lines | Played by |
+|---|---|---|
+| `voices_<level>_generic_mercs` (Instincts 01b, 02, 03, 04, 05, 07, 10, 11) | 29 to 69 a level, 0.5 to 12 s | conversations of mercenaries (common and kit 3, any Merc pack); the rest of each bank no anchor plays |
+| `voices_14_generic_specops` (level 13) | 20 | the heavy mercenaries (OPS packs) |
+| `voices_01a_generic_workers` | 45 | workers (no anchor in the levels) |
+| `voices_merc1`, `_merc2`, `_merc3` (events no pack names, 0.7 to 37 s) | 5, 3, 6 | mercenaries at anchors (monologues) |
+| `se_*`, `voices_se_*` (Instincts), `fc15_se_*` (Evolution; `_ad` banks mostly the enemies') | a few each | mixed: mercenaries, pirates, rebels, ferals beside Crowe, Valerie, Doyle, the femme fatale, Krieger, scientists, workers, the hacker |
+| `voices_gen_crowe`, `voices_krieger`, `voices_gen_carver`, radio and announcer banks | | named people; most lines by no anchor |
+
+Most lines of the `se_*` banks are played by no anchor and no script by id: the scripted scenes play them from
+their animations (the `_se` animation lists); who speaks them is not in the data.
+
+The lines' text is in common.dat's string tables (`<stringtable language="english">`, section `Subtitles`:
+`<string enum="63373316" value="Stupid bar keep.\nTelling me I'm drunk. ..."/>`, the enum the event id),
+without the speaker; it tells the scenes' enemy talk from Jack's, Doyle's and the femme fatale's lines.
+
+Counted by speaker, and for 56 scene lines by their subtitle (fci-modsrc `halo/voices/chatter.py`):
+Instincts 488 lines of enemies in 27 banks, 638 kept (people, civilians, unknown speakers, scenes);
+Evolution 137 in 21 banks, 528 kept.
+
 ### Replacing them
 
 The `.LS2` files lie outside the archives, so a mod puts new voices into the bank (`replace`, as with the
@@ -235,5 +270,13 @@ only the first bank of a family and point the other packs at its events: each pa
 rewritten in place (the same length: the script keeps its size and code). The new data is then held once,
 0.15 to 0.94 MB in one bank (the game's own largest is `voices_gen_crowe`, 838 KB, 28 sounds in the bank).
 
-Open: whether those banks fit the game's sound memory (64 MB Xbox, in every level); the level banks'
-scripted conversations; the creatures' animation sounds; what plays `fc15_char_feralwarrior`.
+A conversation bank is a level's, and its lines run to minutes (146 s in `voices_02_generic_mercs`). Every
+Xbox ADPCM block decodes on its own, so a sound may be any whole-block stretch of another one's data:
+`replace(..., windows={sound: (rate, tape, start, frames)})` stores a tape once and makes each sound a
+stretch of it (the runtime plays a buffer where its data lies, `SetBufferData` copies nothing). The voice
+mods give each line a window of its own length into about 14 s of Covenant chatter per bank, cut at the
+phrases' edges, the next line from where the last stopped: 27 to 170 KB in a bank instead of the minutes.
+
+Open: whether those banks fit the game's sound memory (64 MB Xbox, in every level); the scripted scenes'
+lines (whose speakers the data does not name); the creatures' animation sounds; what plays
+`fc15_char_feralwarrior`.
