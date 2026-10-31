@@ -242,7 +242,8 @@ no area.
   Halo. The fist (forearm vertices past 0.40 m) becomes a joint on the hand bone (`joints`), so the forearm
   fits FCI's and the weapon sits in the fist. Torso 1.1 / 1.0 / 0.9 (pelvis, spine, spine1), arms 1.3 / 1.25,
   head 1.2, 12 cm down and 3 cm forward. It stands 1.82 m to the tank's tip, its head 1.31 to 1.76 m: a big
-  Grunt (shorter legs would leave the feet in the air or the hips off the bones). In poses that hold a
+  Grunt (shorter legs would leave the feet in the air or the hips off the bones). The game draws it at 0.77
+  (`entity_scale`, below): 1.40 m to the tank's tip, the head at 1.0 to 1.36 m, as Halo's. In poses that hold a
   weapon close (forearms across the belly) the arms vanish in the shell: its chest is wider than a human's.
 - *Jackal* (digitigrade like the elite: thigh forward, calf back to the horselink, which merges into the
   calf as the elite's; hips at 0.996 m, quills 2.10 m). Thickness 0.9, hands and feet 0.9, head 1.05 moved
@@ -278,13 +279,37 @@ importer refuses a config whose mods for different models write one file.
 | | feral_warrior_kit_03 | `halo-grunt-feral-kit03`; `halo-elite-feral-kit03`, `halo-jackal-feral-kit03` (majors) |
 | | hats | `halo-hats-off` (beret01 in 21 to 30) |
 
+**Size (entity scale).** The skeleton and its animations fix the height (hips at 0.955 m), so a smaller
+creature is a smaller entity, not a smaller mesh. BasicAI (`scripts\default\entities\ai\basicai.lua`,
+both games, the same code) ends OnReset with `if self.PropertiesInstance.fScale then
+self:SetStatObjScale(self.PropertiesInstance.fScale) end`; SetStatObjScale (Evolution 00185D43) stores the scale
+in the entity (+0x3D8), passes it to the entity's physics (its params with the scale) and marks the world
+matrix dirty. Measured 2026-10-31 (24_SHANTYDAY, the Deck save, every Merc at fScale 0.77): the character
+draws (vertex shader 015857D1) carry a world matrix of scale 0.77 while the bone matrices stay 1; the small
+Grunts walk, aim, shoot and fall to a shotgun hit (the crosshair turns red on them). The level data sets
+fScale for nobody. `entity_scale` in a character config (character_import.py) hooks OnReset: before the test it
+loads, once, the carrier script of each scaled model of the config and sets fScale from `HaloScale[stem of
+Properties.fileModel]`. A carrier is one of the game's AI character scripts (`scripts/ai/characters/...`, plain
+definitions such as `AICharacter.Dragon = {...}`, in both games, touched by no other mod; lua_patch.CARRIERS,
+one per scaled model in the order of the models' file names): the mod that replaces the model ships it with one
+more line, `HaloScale[stem] = size`; without that mod the game's own carrier runs and sets nothing. Every mod
+with a scaled model ships the same hooked BasicAI (no conflict in the menu), so the size follows the alternative
+switched on for each FCI model. Own marker files do not work: `Script:LoadScript` of a script that is in neither
+lua.dat nor the game folder stops the game with a script error (Evolution 001E053D raises it, 001E047F ->
+0018F920; the error screen drawn over the frame, the game at 4 frames a second in the menu), and Lua's protected
+`call` does not catch it; neither `GetBonePos` (nothing posed yet at OnReset) nor `GetLocalBBox` (not the model's
+header box) can tell the models apart. Grunt: 0.77 (1.82 m drawn at 1.40 m). Checked in game 2026-10-31 (the
+Deck save in 24_SHANTYDAY): the kit 3 Grunt mod next to the kit 1 Elite mod, the Grunts smaller than the Elites
+beside them, the Elites unscaled, the game at its usual speed; Instincts' 02_Native with the common-merc Grunt
+runs as before.
+
 **Results (built 2026-10-30; the earlier combined Elite mod worked in Evolution).** Software
 renders of every built model in the bind pose and four poses driven by the template's bones (a stride with
 the arms down, forearms across the belly, a crouch with the head turned and the hands twisted) next to the
 original (fci-modsrc `mods\_check\<game>\char-<model>.png`): no tears, soles within 1 cm of the
 template's floor in the bind pose, textures in place through the redirected materials. Every rebuilt model
 keeps its template's version, bones, parts and physics tail; between all mod folders only the alternatives
-for one model share files. Heights: elite 1.94 m (spec-ops 2.03), Jackal 2.00, Grunt 1.82, Flood 1.82,
+for one model share files. Heights: elite 1.94 m (spec-ops 2.03), Jackal 2.00, Grunt 1.82 (drawn at 0.77: 1.40), Flood 1.82,
 Hunter 2.80. The Instincts models and the Trigen hold +-1 m around the pelvis at 1/32767 and get 2/32767 when
 the creature is taller (Elite, Jackal); the pirates', rebels' and feral warriors' own 0.002 holds +-65 m.
 Hit capsules and ragdoll stay the template's (human, or the Chucker's).

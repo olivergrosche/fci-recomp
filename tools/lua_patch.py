@@ -614,6 +614,147 @@ def effect_hooks(chunk):
     return out
 
 
+# --- the size of characters: BasicAI's entity scale per model -----------------------------------------------
+
+BASICAI = "scripts\\default\\entities\\ai\\basicai.lua_compiled"
+# Where a scaled model's size rides: the game's AI character scripts (in both games, plain definitions such as
+# AICharacter.Dragon = {...}, never touched by other mods), one per scaled model of a config in this order. A mod
+# ships its model's carrier with one more line (HaloScale[stem] = scale); without the mod the game's own runs.
+# Script:LoadScript of a script that is not there stops the game with a script error, so the size cannot come
+# in files of its own that only some mods ship.
+CARRIERS = [
+    f"scripts/ai/characters/{c}.lua"
+    for c in (
+        "personalities/chucker",
+        "personalities/crowe",
+        "personalities/dragon",
+        "personalities/freak",
+        "personalities/sapper",
+        "personalities/valerie",
+        "personalities/worker",
+        "vehicles/boatgun",
+        "vehicles/boatzodiac",
+        "vehicles/carhumvee",
+        "vehicles/heliassault",
+    )
+]
+
+
+def stem_of(model):
+    return Path(model.replace("\\", "/")).stem.lower()
+
+
+def scale_carriers(models):
+    """{model stem: the carrier script (as LoadScript names it, and as lua.dat names it)} for a config's scaled
+    models"""
+    stems = sorted({stem_of(m) for m in models})
+    if len(stems) > len(CARRIERS):
+        raise ValueError(f"{len(stems)} scaled models but only {len(CARRIERS)} carrier scripts")
+    return {s: (c, script_path(c)) for s, c in zip(stems, CARRIERS)}
+
+
+def entity_scale_hook(chunk, models):
+    """BasicAI's chunk whose OnReset gives an AI the scale its model's carrier sets: before it applies
+    PropertiesInstance.fScale (the game's own per-entity scale, SetStatObjScale: drawing, hits and physics
+    follow), it loads the carriers of these models once (scripts that are always there; a mod that replaces a
+    model ships its carrier with HaloScale[<model file's stem>] = scale) and sets fScale from
+    HaloScale[stem of Properties.fileModel]"""
+    main = read(chunk)
+
+    def every(f):
+        yield f
+        for g in f.protos:
+            yield from every(g)
+
+    def has(f, s):
+        return (STRING, s.encode() + b"\0") in f.k
+
+    fns = [f for f in every(main) if has(f, "SetStatObjScale") and has(f, "OnResetCustom")]
+    if len(fns) != 1:
+        raise ValueError("BasicAI's OnReset is not the one this hook knows")
+    f = fns[0]
+    if has(f, "HaloScaleLoaded"):
+        return chunk
+    at = next(
+        (
+            pc
+            for pc in range(len(f.code) - 1)
+            if _gets(f, pc, 1, 0, "PropertiesInstance") and _gets(f, pc + 1, 1, 1, "fScale")
+        ),
+        None,
+    )
+    if at is None:
+        raise ValueError("BasicAI's OnReset applies no PropertiesInstance.fScale")
+    G, K = OP["GETGLOBAL"], OP["LOADK"]
+    load = [abx(OP["LOADINT"], 1, 1 + SBX_BIAS), abx(OP["SETGLOBAL"], 1, _k(f, "HaloScaleLoaded"))]
+    for carrier, _ in scale_carriers(models).values():
+        load += [
+            abx(G, 2, _k(f, "Script")),
+            abc(OP["SELF"], 2, 2, _rk(f, "LoadScript")),
+            abx(K, 4, _k(f, carrier)),
+            abc(OP["CALL"], 2, 2, 0),  # Script:LoadScript(carrier): loaded once (the game may have already)
+        ]
+    head = [abx(G, 1, _k(f, "HaloScaleLoaded")), abc(OP["TESTT"], 1, 1, 0), abx(OP["CJMP"], 0, len(load) + SBX_BIAS)]
+    find = [
+        abx(G, 1, _k(f, "HaloScale")),
+        abc(OP["TESTF"], 1, 1, 0),
+        None,
+        abc(OP["GETTABLE"], 2, 0, _rk(f, "Properties")),
+        abc(OP["GETTABLE"], 2, 2, _rk(f, "fileModel")),
+        abc(OP["TESTF"], 2, 2, 0),
+        None,
+        abx(G, 3, _k(f, "strlower")),
+        abc(OP["MOVE"], 4, 2, 0),
+        abc(OP["CALL"], 3, 1, 1),  # R3 = strlower(fileModel)
+        abx(G, 2, _k(f, "strfind")),
+        abx(K, 4, _k(f, "([%w_]+)%.xbg$")),
+        abc(OP["CALL"], 2, 2, 3),  # R2, R3, R4 = start, end, the file's stem
+        abc(OP["TESTF"], 4, 4, 0),
+        None,
+        abc(OP["GETTABLE"], 1, 1, 4),  # R1 = HaloScale[stem]
+        abc(OP["TESTF"], 1, 1, 0),
+        None,
+        abc(OP["GETTABLE"], 2, 0, _rk(f, "PropertiesInstance")),
+        abc(OP["SETTABLE"], 1, 2, _rk(f, "fScale")),
+    ]
+    for i, w in enumerate(find):
+        if w is None:  # past the end
+            find[i] = abx(OP["CJMP"], 0, len(find) - (i + 1) + SBX_BIAS)
+    insert_code(f, at, head + load + find)
+    f.header[4] = max(f.header[4], 5)
+    out = write(main)
+    read(out)
+    return out
+
+
+def scale_marker(carrier, model, scale):
+    """a carrier script's chunk that also sets HaloScale[<model's stem>] = scale (HaloScale made if need be),
+    before its main function returns"""
+    main = read(carrier)
+    if (STRING, b"HaloScale\0") in main.k:
+        raise ValueError("the carrier already carries a size")
+    rets = [pc for pc, w in enumerate(main.code) if op(w) == OP["RETURN"]]
+    if not rets or rets[-1] != len(main.code) - 1:
+        raise ValueError("the carrier's main function does not end with its RETURN")
+    r = main.header[4]
+    main.k.append((NUMBER, float(scale)))
+    kn = len(main.k) - 1
+    block = [
+        abx(OP["GETGLOBAL"], r, _k(main, "HaloScale")),
+        abc(OP["TESTT"], r, r, 0),
+        abx(OP["CJMP"], 0, 2 + SBX_BIAS),
+        abx(OP["NEWTABLE"], r, 0),
+        abx(OP["SETGLOBAL"], r, _k(main, "HaloScale")),
+        abx(OP["LOADK"], r + 1, kn),
+        abc(OP["SETTABLE"], r + 1, r, _rk(main, stem_of(model))),
+    ]
+    insert_code(main, len(main.code) - 1, block)
+    main.header[4] = r + 2
+    out = write(main)
+    read(out)
+    return out
+
+
 # --- lua.dat ------------------------------------------------------------------------------------------
 
 

@@ -72,6 +72,16 @@ other two of the template's textures, ideally ones no other model uses, and the 
 "blend", default 0.03) move to the new joint, which goes to "bone": a Grunt's fist, part of its forearm,
 goes to the hand bone, so that the forearm fits the template's and the weapon sits in the fist.
 
+"entity_scale": 0.77 (a model's setting) has the game draw every AI that wears the model at that size, its
+skeleton, animations, hit capsules and physics with it (BasicAI's own per-entity scale, PropertiesInstance.
+fScale, which OnReset hands to SetStatObjScale): the mod ships BasicAI with a hook (lua/scripts/default/
+entities/ai/basicai.lua_compiled, the same bytes in every mod of the config that has a scaled model, so they
+do not conflict) and the model's carrier: one of the game's AI character scripts (lua_patch.CARRIERS, one per
+scaled model of the config, in the order of the models' file names) with one more line, HaloScale[<stem of the
+model's file>] = size. The hook loads the carriers once (they are always there: a LoadScript of a missing
+script stops the game) and scales an AI whose Properties.fileModel's stem HaloScale names: the size follows
+whichever alternative for that model is switched on.
+
 "reshape" turns the vertices whose largest weight is on "joint", whose material is "material" and that lie
 in "box" (any of the three may be left out) rigidly about "pivot", before the fit: a part that the fit would
 turn with its joint (a Grunt's methane tank tips back with the straightened spine) is turned the other way.
@@ -89,6 +99,7 @@ from PIL import Image, ImageChops
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import dat2  # noqa: E402
+import lua_patch  # noqa: E402
 import weapon_import  # noqa: E402
 import xbg  # noqa: E402
 import xbt  # noqa: E402
@@ -998,16 +1009,37 @@ def build(cfg, base, only_info=False, only=None):
     src = Source(cfg, base)
     plans = [plan(m, src) for m in mod_configs(cfg)]
     check_conflicts(plans)
+    scaled = sorted({m["path"] for p in plans for m in p["models"] if m["cfg"].get("entity_scale")})
+    if scaled and not src.game:
+        raise SystemExit('error: "entity_scale" needs "game" (the scripts come from its lua.dat)')
     ids = [p["id"] for p in plans]
     for name in only or ():
         if name not in ids:
             raise SystemExit(f"error: no mod {name} in the config ({', '.join(map(str, ids))})")
     for p in plans:
         if not only or p["id"] in only:
-            build_mod(p, base, src, only_info, many=len(plans) > 1)
+            build_mod(p, base, src, only_info, many=len(plans) > 1, scaled=scaled)
 
 
-def build_mod(p, base, src, only_info=False, many=False):
+def scale_scripts(src, models, scaled):
+    """{path in the lua archive: bytes}: BasicAI hooked for every scaled model of the config (the same file
+    in each mod that ships it) and the carrier script of each of this mod's scaled models with its size"""
+    chunks = lua_patch.scripts(src.game)
+    basicai = chunks.get(lua_patch.name_hash(lua_patch.BASICAI))
+    if basicai is None:
+        raise SystemExit(f"error: {src.game}/lua.dat has no {lua_patch.BASICAI}")
+    out = {lua_patch.BASICAI: lua_patch.entity_scale_hook(basicai, scaled)}
+    carriers = lua_patch.scale_carriers(scaled)
+    for m in models:
+        inner = carriers[lua_patch.stem_of(m["path"])][1]
+        carrier = chunks.get(lua_patch.name_hash(inner))
+        if carrier is None:
+            raise SystemExit(f"error: {src.game}/lua.dat has no {inner}")
+        out[inner] = lua_patch.scale_marker(carrier, m["path"], m["cfg"]["entity_scale"])
+    return out
+
+
+def build_mod(p, base, src, only_info=False, many=False, scaled=()):
     cfg = p["cfg"]
     out = Path(base, cfg["out"]) if cfg.get("out") else None
     if many:
@@ -1042,6 +1074,12 @@ def build_mod(p, base, src, only_info=False, many=False):
     for rel, hats in p["hats"].items():
         for h in hats:
             written.append(write(out / rel / h, invisible_rigid(src.read(rel, h))))
+    mine = [m for m in p["models"] if m["cfg"].get("entity_scale")]
+    if mine:  # the game draws, hits and moves these models' wearers at that size (BasicAI's fScale)
+        for inner, data in scale_scripts(src, mine, scaled).items():
+            written.append(write(out / "lua" / inner.replace("\\", "/"), data))
+        sizes = ", ".join(f"{m['cfg']['entity_scale']:g}" for m in mine)
+        print(f"  entity scale {sizes}: lua/{lua_patch.BASICAI}")
     if cfg.get("mod"):
         out.mkdir(parents=True, exist_ok=True)
         write_mod_ini(out, cfg["mod"])

@@ -414,3 +414,149 @@ def test_run_config_writes_the_hooked_basic_weapon(tmp_path, capsys):
     written = tmp_path / "mod" / "scripts" / "default" / "entities" / "weapons" / "basicweapon.lua_compiled"
     assert written.read_bytes() == lp.effect_hooks(basic_weapon())
     assert "the effect hooks" in capsys.readouterr().out
+
+
+# --- the entity scale: a synthetic BasicAI OnReset (applies PropertiesInstance.fScale as the games' does) ---
+
+
+def basic_ai():
+    k = [
+        "PropertiesInstance",
+        "fScale",
+        "SetStatObjScale",
+        "OnResetCustom",
+        "Script",
+        "LoadScript",
+        "strlower",
+        "strfind",
+        "Properties",
+        "fileModel",
+    ]
+    reset = function([], k, stack=4)
+    reset.code = [
+        lp.abc(OP["GETTABLE"], 1, 0, rk(reset, "PropertiesInstance")),
+        lp.abc(OP["GETTABLE"], 1, 1, rk(reset, "fScale")),
+        lp.abc(OP["TESTF"], 1, 1, 0),
+        jump("CJMP", 3, 8),
+        lp.abc(OP["SELF"], 1, 0, rk(reset, "SetStatObjScale")),
+        lp.abc(OP["GETTABLE"], 3, 0, rk(reset, "PropertiesInstance")),
+        lp.abc(OP["GETTABLE"], 3, 3, rk(reset, "fScale")),
+        lp.abc(OP["CALL"], 1, 2, 0),
+        lp.abc(OP["RETURN"], 0, 0, 0),
+    ]
+    main = function([lp.abc(OP["RETURN"], 0, 0, 0)], [], [reset])
+    main.chunk_header = HEADER
+    return lp.write(main)
+
+
+def call(f, regs, globs, entity):
+    """run f with R0 = entity (a dict) and Lua's globals; the calls it makes are Python functions"""
+
+    def k(i):
+        return lp.constant(f, i)
+
+    def rk_(x):
+        return k(x - 250) if x >= 250 else regs[x]
+
+    pc = 0
+    regs[0] = entity
+    while True:
+        w = f.code[pc]
+        o, a, b, c = lp.OPS[lp.op(w)], lp.a_of(w), lp.b_of(w), lp.c_of(w)
+        pc += 1
+        if o == "GETGLOBAL":
+            regs[a] = globs.get(k(lp.bx_of(w)))
+        elif o == "SETGLOBAL":
+            globs[k(lp.bx_of(w))] = regs[a]
+        elif o == "NEWTABLE":
+            regs[a] = {}
+        elif o == "LOADK":
+            regs[a] = k(lp.bx_of(w))
+        elif o == "LOADINT":
+            regs[a] = lp.bx_of(w) - lp.SBX_BIAS
+        elif o == "LOADNIL":
+            for r in range(a, b + 1):
+                regs[r] = None
+        elif o == "SETLIST":
+            n = lp.bx_of(w)
+            for i in range(1, n % 32 + 2):
+                regs[a][n - n % 32 + i] = regs[a + i]
+        elif o == "MOVE":
+            regs[a] = regs[b]
+        elif o == "GETTABLE":
+            regs[a] = regs[b].get(rk_(c)) if isinstance(regs[b], dict) else None
+        elif o == "SETTABLE":
+            regs[b][rk_(c)] = regs[a]
+        elif o == "SELF":
+            regs[a + 1] = regs[b]
+            regs[a] = regs[b][rk_(c)]
+        elif o == "CALL":
+            out = regs[a](*regs[a + 1 : a + 1 + b])
+            out = out if isinstance(out, tuple) else (out,)
+            for i in range(c):
+                regs[a + i] = out[i] if i < len(out) else None
+        elif o in ("TESTT", "TESTF"):
+            if (regs[b] is not None) != (o == "TESTT"):  # only nil is false
+                pc += 1  # past the jump
+        elif o == "CJMP":
+            pc += lp.bx_of(w) - lp.SBX_BIAS
+        elif o == "RETURN":
+            return
+        else:
+            raise AssertionError(o)
+
+
+def carrier_script():
+    """an AI character script: AICharacter.Dragon = {} as the game's"""
+    main = function([], ["AICharacter", "Dragon"], stack=2)
+    main.code = [
+        lp.abx(OP["GETGLOBAL"], 0, 0),
+        lp.abx(OP["NEWTABLE"], 1, 0),
+        lp.abc(OP["SETTABLE"], 1, 0, rk(main, "Dragon")),
+        lp.abc(OP["RETURN"], 0, 0, 0),
+    ]
+    main.chunk_header = HEADER
+    return lp.write(main)
+
+
+def test_entity_scale_hook_scales_the_ais_whose_model_has_a_marked_carrier():
+    import re
+
+    models = ["Animations/Characters/Pirate/Pirate_Kit_03.xbg", "animations/characters/rebels/rebel_kit_01.xbg"]
+    carriers = lp.scale_carriers(models)
+    assert carriers["pirate_kit_03"] == (lp.CARRIERS[0], lp.script_path(lp.CARRIERS[0]))
+    assert carriers["rebel_kit_01"][0] == lp.CARRIERS[1]
+    new = lp.entity_scale_hook(basic_ai(), models)
+    assert lp.entity_scale_hook(new, models) == new  # once only
+    reset = lp.read(new).protos[0]
+    marked = lp.scale_marker(carrier_script(), models[0], 0.77)
+    with pytest.raises(ValueError, match="already"):
+        lp.scale_marker(marked, models[0], 0.77)
+    loaded, scaled = [], []
+    globs = {"AICharacter": {}}
+
+    def load_script(script, path):  # pirate_kit_03's mod is on (its carrier marked), rebel_kit_01's is not
+        loaded.append(path)
+        chunk = marked if path == carriers["pirate_kit_03"][0] else carrier_script()
+        call(lp.read(chunk), [None] * 8, globs, None)
+
+    def strfind(s, pattern):
+        m = re.search(r"([\w_]+)\.xbg$", s)
+        return (m.start() + 1, m.end(), m.group(1)) if m else (None,)
+
+    globs.update(Script={"LoadScript": load_script}, strlower=str.lower, strfind=strfind)
+    for model, want in (
+        (r"animations\characters\pirate\PIRATE_KIT_03.xbg", 0.77),
+        (r"x\rebel_kit_01.xbg", None),
+        (None, None),
+    ):
+        ai = {
+            "Properties": {"fileModel": model},
+            "PropertiesInstance": {},
+            "SetStatObjScale": lambda self, s: scaled.append(s),
+        }
+        call(reset, [None] * reset.header[4] * 2, globs, ai)
+        assert ai["PropertiesInstance"].get("fScale") == (pytest.approx(want) if want else None)
+    assert scaled == [pytest.approx(0.77)]
+    assert loaded == [lp.CARRIERS[0], lp.CARRIERS[1]]  # each carrier once
+    assert globs["AICharacter"] == {"Dragon": {}}  # the carriers' own definitions still run
