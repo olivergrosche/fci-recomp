@@ -577,10 +577,12 @@ def effect_hooks(chunk):
     hit = _client_function(
         main,
         "OnHit",
-        lambda f: [op(w) for w in f.code].count(OP["RETURN"]) == 1
-        and op(f.code[-1]) == OP["RETURN"]
-        and any(_gets(f, pc, 4, 3, "damage_type") for pc in range(len(f.code)))
-        and any(_gets(f, pc, 2, 1, "shooter") for pc in range(len(f.code))),
+        lambda f: (
+            [op(w) for w in f.code].count(OP["RETURN"]) == 1
+            and op(f.code[-1]) == OP["RETURN"]
+            and any(_gets(f, pc, 4, 3, "damage_type") for pc in range(len(f.code)))
+            and any(_gets(f, pc, 2, 1, "shooter") for pc in range(len(f.code)))
+        ),
     )
     block = effect_call(
         hit,
