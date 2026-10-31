@@ -759,8 +759,9 @@ static void load_rules(void)
                         r.attribute[eq - a] = 0;
                         memcpy(r.value, q, (size_t)(e - q));
                         r.value[e - q] = 0;
-                        for (j = 0; j < nrules && (_stricmp(rules[j].archetype, r.archetype)
-                                                   || strcmp(rules[j].attribute, r.attribute));
+                        for (j = 0; j < nrules
+                                    && (_stricmp(rules[j].archetype, r.archetype)
+                                        || strcmp(rules[j].attribute, r.attribute));
                              j++)
                             ;
                         if (j < nrules)
@@ -851,8 +852,8 @@ static int patch_mission(const WCHAR *archive, const uint8_t *mission, DWORD siz
     memcpy(o + w, t + from, size - from);
     w += size - from;
     free(c);
-    fprintf(stderr, "[FCI] mods: mission of %S: %d values of %d entities set by the mods' rules\n", archive, nc,
-            entities);
+    fprintf(stderr, "[FCI] mods: mission of %S: %d values of %d entities set by the mods' rules\n", archive,
+            nc, entities);
     *out = o;
     *out_size = (uint32_t)w;
     return 1;
