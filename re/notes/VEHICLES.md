@@ -164,17 +164,23 @@ largest connected remainder. check.py draws every seat from the measured camera 
 each way, back, 30 deg down). Turret parts (`turret_mesh`) are not cleared: they turn with the gun about
 `turret` (as the game's own Browning, whose barrels sweep the rear seats).
 
-The Humvee's seats sit 0.36 m before the Warthog's (its driver's camera looked from 0.12 m over the Warthog's
-hood, 4 cm behind its rear edge: kept, the hood filled the view; cleared, it had holes onto the ground), and its
-gun 0.94 m before the Warthog's (the mount's column then stood between the front seats' heads). The Humvee
-configs move them with `helpers` (`{"by": [dx, dy, dz]}`, metres): `driver_sit_pos`, `eye_pos` and
-`steering_pivot` by (0.119, -0.36, 0.028), `passenger1_sit_pos` and `passenger1_eye_pos` by (-0.119, -0.36,
-0.028), onto the Warthog's seats (Halo's `marker driver`), and `turret`, `turret_pivot`, `gun`,
-`gunner_eye_pos`, `gunner_sit_pos` by (0, -0.937, 0.079), onto the Warthog's own gun (Halo's `frame gun`): the
-gunner stands in the bed as in Halo, his view of the gun is unchanged (eye and gun moved together). The rear
-passengers stay (their heads are where the Warthog's roll bar is, which the clearance takes). The physics
-proxies in the tail (the turret's too) stay where they were. From every seat the nearest built triangle is
-then 0.28 m or more away (offline, measured camera model).
+The Humvee's seats sit 0.36 m before the Warthog's: its driver's camera looked from 0.12 m over the Warthog's
+hood, 4 cm behind its rear edge. Moving the seat bones (`helpers`, deef72c) did not move the game's camera: the
+Deck frame of that build (deck-fci5) matches the offline view from the template's `eye_pos` (+ 0.28 m), not from
+the moved one, and the steering wheel stayed on the template's pivot. The seats, the turret, the gun and the
+gunner therefore stay the template's (a moved gun with an unmoved gunner camera would break the gunner's
+view). Instead the Humvee's body sits 0.15 m lower on its wheels (`"offset": [0, 0, -0.15]` on the hull part;
+the fenders still clear the tires by 0.12 m): the hood is then 0.27 m under the driver's camera and from every
+seat the nearest built triangle 0.16 m or more away (the gun mount's column when a front seat looks 80 to 100
+deg inward), ahead 0.43 m.
+
+The see-through body (deef72c, deck-fci5/6: hood, lower panels and wheel arches missing from outside and from
+the seat) was the alpha test: the Humvee's hull material (number 2, flags 0x2120; the pickup's main material has
+0x21 and no such test) keeps only texels with alpha above about 128, and the template's texture has none below
+128 (mean 176). The importer writes the gloss as the alpha; at [126, 155] 57 % of the Warthog atlas fell under
+128, the dirty lower panels most. Before, the lit inside copy (lit from above) hid part of it. The Humvee configs
+now use gloss [150, 205] (alpha 141 to 211). The winding is the template's (all triangles turn the same way
+against their normals as in the game's own Humvee).
 
 Given up (2026-10-31, the user's Deck): `inner` (a lit inside: every triangle again 1 cm in, turned round)
 z-fought with the outside at a distance (frayed lower edges, white flickering fragments) and showed through
