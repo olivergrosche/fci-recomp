@@ -121,6 +121,12 @@ effect when the game next opens its archives: at a level change or after Quit to
 folder itself is never changed: the archives the switched-on mods touch are merged into `mods\.cache`
 and read from there. The choice is kept in `mods\enabled.txt`.
 
+Above the mods the menu has two settings, which take effect at once and with no mods too: **Weapon
+strength**, the damage your weapons deal to people and creatures (bullets, melee, your explosions), and
+**Enemy damage**, the damage others deal to you, each from 25 % to 200 % in steps of 5 % (the game's own is
+100 %). The mouse drags them; the arrow keys, the d-pad and the left stick move the focused one. They are
+kept in `mods\settings.ini` (re/notes/WEAPONS.md, "Damage").
+
 `tools/weapon_import.py` turns a glTF model into a weapon's files (re/notes/MODELS.md); `tools/dat2.py` and
 `tools/xbt.py` take the archives and textures apart.
 

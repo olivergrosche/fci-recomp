@@ -173,3 +173,106 @@ while the one before draws). Read when the renderer draws, the number was a fram
 on the gun beside the HUD's 29). Each value is now kept with the title's count of presents at the time
 (xbr/fci_counter.cpp `NotePresent`, in the threaded backend's Present), and the renderer reads the state of the
 present count it draws: the gun and the HUD change in the same picture.
+
+# Damage: weapon strength and enemy damage (src/fci_damage.c)
+
+Found 2026-10-31 from both games' `lua.dat` (the single-player GameRules script, BasicWeapon, BasicPlayer) and
+XBEs (the hit table builders by their key strings), checked in game in Instincts' 02_Native.
+
+## Where the game applies it
+
+The scripts apply all damage to characters. `GameRules:OnDamage(hit)` (the single-player GameRules, the script
+whose first constant is `GameRules` and which builds `player_to_ai_damage`) takes `hit.damage`, multiplies it by
+a table chosen by who hits whom and by the body part (`target_material_id` 30 head, 34 heart, 33 body, 32 arm,
+31 leg; an explosion takes the sixth entry times `target:IsAffectedByExplosion()`), and calls
+`GameRules:ApplyDamage(hit, target, damage, piercing)`, which takes armour off first (2/3 of the damage while
+there is armour) and the rest off `target.cnt.health`. Instincts' tables (the same at every difficulty):
+
+| Table | Head, heart, body, arm, leg, explosion | Used when |
+|---|---|---|
+| `player_to_ai_damage` | 9, 1, 1, 1, 1, 2 | an AI target, the shooter not an AI |
+| `player_to_chucker_damage` | 1, 1, 1, 0.1, 1, 0.25 | a Chucker |
+| `player_to_crowe_damage` | 1 each | Crowe (`Properties.bIsCrowe`) |
+| `ai_to_ai_damage` | 3, 1, 1, 1, 1, 1 | AI on AI |
+| `ai_to_player_damage` | 0.5 each, explosion 0.33 | any hit on Jack |
+
+Evolution's script (the same name in its `lua.dat`) has `player_to_ai_damage` 9, 1, 1, 1, 1, 1,
+`ai_to_ai_damage` and `ai_to_player_damage` 1 each, adds `player_to_boss_damage` (2, 1, 1, 1, 1, 0.25),
+`ai_to_player_in_railshooter_damage` (0.15 each, the scripted rides) and multipliers by difficulty
+(`difficulty_level_damage_multipliers` 0.8, 1, 1.2, 1.4 and a second table). The hooks below sit before all of it.
+
+The shooter's `Properties.fWeaponDamageMultiplier` scales an AI's gunfire; `bFullDamageOnMeleeHit` makes an AI's
+melee ignore the table. `hit.damage` comes from the engine:
+
+- Bullets: the weapon's hit function (Instincts 000EBEE0, Evolution 000B648F; the hit struct its first argument:
+  +0 position, +0xC normal, +0x18 direction, +0x24 damage, +0x28 target entity, +0x2C part, +0x34 shooter
+  entity, +0x38 weapon, +0x40 material) fills the weapon's hit table, runs the weapon's `Server:OnHit` and
+  `Client:OnHit` (000E89D0 / 000B3F84; the client one picks the blood's size by `hit.damage`: over 30 big, over
+  15 medium) and then the target's OnDamage (entity vtable +0x128), which calls the script's. The damage is the
+  fire mode's `damage` less the fall-off between `distance` and `distance_max` and less what the surfaces before
+  took (000EBA70; Jack's own shots within 4 m count double in single player while the game object's +0x60,
+  likely the difficulty, is at most 1).
+- Explosions: the explosion code (Instincts 000B617F, Evolution 0008E48F) makes a table per entity in reach with
+  `explosion = 1`, the shooter and `damage` = the explosion's damage times its fall-off, set through the script
+  object's SetValue(key, float) (vtable +0x34: Instincts 002985A0, call at 000B6728; Evolution 001E7AEE, call at
+  0008EABC), then calls the entity's OnDamage. Grenades, rockets and other projectiles all end here.
+- Melee: the melee attack (Instincts 0007A1B0, Evolution 0005D370; ecx = the attacker's player object) finds the
+  bodies hit and calls the BasicPlayer `MeleeAttack(hits)` script, which sets `hit.melee = 1`, `hit.damage =
+  self.cnt.melee_damage` (the player object's +0x1A4, Evolution +0x1B0; set from the weapon before) and calls
+  `target:Damage(hit)` (the script entity's Damage, 00211760: the entity's OnDamage).
+
+Jack is the entity of the game's first player slot (Instincts [006B3984]+0x28, Evolution [0056B594]+0x2C; its
+entity id at +0x30, 1000000 in play; an entity's id is at +0xA4). A character's container (entity +0x23C) is its
+player object, pointing back at the entity at +4, with `cnt.health` at +0x160 (Evolution +0x178). Jack's player
+class and the AI ones differ (vtables 005FC320, 0060D4D0 and others in Instincts) but share their base's
+QueryContainerInterface (vtable +0x10); vehicles have another.
+
+## The hooks (src/fci_damage.c)
+
+The mod menu's settings (fci_mods.c, `mods\settings.ini`: `weapon-strength`, `enemy-damage`, 25 to 200 %) are
+read at every hit, so a change counts from the next shot:
+
+- A gate on the bullet hit finds the factor: the weapon strength when Jack hits a character, the enemy damage
+  when another hits Jack. A gate on its OnHit call runs the OnHit scripts first and then sets the table's
+  `damage` to the scaled value (SetValue through the table's vtable, the game's own "damage" key, Instincts
+  005FC1AC, Evolution 004B034C), so the target's OnDamage gets it and the blood stays the size it was.
+- A prehook on SetValue(key, float) scales the value when the call comes from the explosion code (its return
+  address), the shooter and target read from that frame (Instincts [esp+0x3C] and ebp, Evolution [ebp-0x40] and
+  ebx).
+- A gate on the melee attack scales the attacker's melee_damage for the call and puts it back: Jack's by the
+  weapon strength, anyone else's by the enemy damage (that also counts an AI's melee on another AI, rare).
+
+At 100 % nothing is changed. `RECOMP_FCI_DAMAGE_LOG=1` prints each bullet hit by or on Jack with the target's
+health before and after, each scaled explosion and melee.
+
+## Checked
+
+Instincts' 02_Native from the user's save (test install, the user's mod set: Halo weapons, Elites and blood; the
+user's display options with frame replay; the keyboard mode left out, see below), the log on, the menu moved
+with the pad (both sticks, d-pad steps, B) while the game ran, and a test aid (RECOMP_FCI_DAMAGE_TEST_AIM=1)
+that turns Jack toward whoever last shot him:
+
+| Weapon strength | Jack's MA5B on an Elite's body (damage 8 or 9) | body hits for 50 health | for 80 |
+|---|---|---|---|
+| 100 % | 8 off its health (50 -> 42 -> 34) | 7 body hits | 10 |
+| 50 % (moved to live) | 4.5 off (50 -> 45.5 -> 41 -> 36.5) | 12 | 18 |
+| 200 % (moved to live) | 16 or 18 off (50 -> 34 -> 18 -> 2 -> 0; 80 -> 62 -> 44 -> 26) | 4 | 5 |
+
+A head shot (the table's 9) took a 50-health Elite in one hit at 100 %. Enemy damage: an Elite's 9 on Jack took
+1.5 off his health while he had armour and 4.5 after it at 100 %, 0.375 at 25 % and 0.75 at 50 % (with armour).
+The hit counts come from the measured damage; at 200 % the kills were seen too: a 50-health Elite in 3 or 4 hits
+(damage 9 or 8), an 80-health one in 4 or 5. Jack's melee_damage (15) was 30 during his melee attacks at 200 %
+and 7.5 at 50 % (none of them reached an enemy in these runs). The settings file follows each step (`[FCI]
+settings:` in the log) and is read at the next start. The menu draws over the game with frame replay on.
+
+The keyboard (RECOMP_KEYBOARD=1, at the title): F1 opened the menu, three Left arrows took the weapon strength to
+85 %, Down went to the enemy damage and two Right arrows to 110 %, Escape closed it; `settings.ini` held both.
+
+Evolution (22_DUNEB from the user's save, the user's mod set, test install): the menu's pad steps, the settings
+file, Jack recognised as the shooter of his own shots (entity 1000000 through the player slot at +0x2C) and the
+splat stain drawn (blend 1 306 0); no enemy came within reach of the runs, so its damage hooks have not scaled a
+real hit yet (they read the same hit struct, explosion frame and player object as checked in the code).
+
+With the keyboard mode on (RECOMP_KEYBOARD=1) a test run's main menu selection wandered by itself while the
+user played the game on the same PC (likely their controller, read by the test instance too); without it the
+menu stayed put, so the damage runs leave the keyboard mode out.

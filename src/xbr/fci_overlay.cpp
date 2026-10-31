@@ -2,7 +2,8 @@
 // mods-menu-key) or a controller's both sticks pressed together open and close it, and the main menu's MODS
 // entry opens it (src/fci_mainmenu.c); while it is open the game gets no input (a neutral pad, no keys, no
 // mouse) and the menu takes the keyboard, the mouse and the controller. A choice is saved at once and takes
-// effect when the game next opens its archives (a level change, the main menu: a new instance).
+// effect when the game next opens its archives (a level change, the main menu: a new instance). The settings
+// at the top (weapon strength, enemy damage: fci_damage.c) take effect at once, with no mods too.
 #include <windows.h>
 
 #include <algorithm>
@@ -41,7 +42,7 @@ constexpr float kFontPixels = 36.0f;
 
 std::atomic<bool> g_open{false};
 std::atomic<int> g_focus{
-        0};   // frames left in which the first mod asks for the focus (a window's first drops it)
+        0};   // frames left in which the first setting asks for the focus (a window's first drops it)
 std::atomic<bool> g_hold{false};   // the game sees a neutral pad until every button is let go
 // the menu follows the controller once its buttons are let go after opening: the A that chose the main
 // menu's MODS entry is still down then and would switch the first mod
@@ -112,6 +113,58 @@ void DimWrapped(const char* text)
     ImGui::PopStyleColor();
 }
 
+// a percent slider in steps of FCI_STRENGTH_STEP: the mouse drags it, and the keyboard's arrows, the pad's
+// d-pad and left stick move it a step while it has the focus (ImGui itself only once it is activated, and
+// then one of its steps is one of ours). True when it changed.
+bool StepSlider(const char* label, int* percent, bool focus)
+{
+    int step = *percent / FCI_STRENGTH_STEP;
+    char shown[32];
+    std::snprintf(shown, sizeof shown, "%d %%%%", *percent);   // a format without a conversion: the text
+    bool changed = ImGui::SliderInt(label, &step, FCI_STRENGTH_MIN / FCI_STRENGTH_STEP,
+                                    FCI_STRENGTH_MAX / FCI_STRENGTH_STEP, shown,
+                                    ImGuiSliderFlags_NoInput | ImGuiSliderFlags_AlwaysClamp);
+    if (focus) {   // the controller's first press acts here
+        ImGui::SetFocusID(ImGui::GetItemID(), ImGui::GetCurrentWindow());
+        ImGui::GetCurrentContext()->NavCursorVisible = true;
+    }
+    if (ImGui::IsItemFocused() && !ImGui::IsItemActive()) {
+        int move = 0;
+        for (ImGuiKey k : {ImGuiKey_LeftArrow, ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadLStickLeft})
+            move -= ImGui::IsKeyPressed(k, true);
+        for (ImGuiKey k : {ImGuiKey_RightArrow, ImGuiKey_GamepadDpadRight, ImGuiKey_GamepadLStickRight})
+            move += ImGui::IsKeyPressed(k, true);
+        if (move) {
+            step = std::clamp(step + move, FCI_STRENGTH_MIN / FCI_STRENGTH_STEP,
+                              FCI_STRENGTH_MAX / FCI_STRENGTH_STEP);
+            changed = true;
+        }
+    }
+    if (changed)
+        *percent = step * FCI_STRENGTH_STEP;
+    return changed;
+}
+
+// the settings above the mods: in effect at once, saved in mods\settings.ini (fci_mods.c)
+void DrawSettings(bool focus)
+{
+    ImGui::SeparatorText("Settings");
+    int weapon = fci_mods_weapon_strength(), enemy = fci_mods_enemy_damage();
+    ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.45f);
+    bool changed = StepSlider("Weapon strength", &weapon, focus);
+    ImGui::Indent();
+    DimWrapped("The damage your weapons deal to people and creatures: bullets, melee and your explosions.");
+    ImGui::Unindent();
+    changed |= StepSlider("Enemy damage", &enemy, false);
+    ImGui::Indent();
+    DimWrapped("The damage others deal to you. Both take effect at once.");
+    ImGui::Unindent();
+    ImGui::PopItemWidth();
+    if (changed)
+        fci_mods_set_strengths(weapon, enemy);
+    ImGui::Spacing();
+}
+
 const char* State(int i)
 {
     bool on = fci_mods_enabled(i), active = fci_mods_active(i);
@@ -142,12 +195,16 @@ void DrawMenu()
     }
     if (!open)
         SetOpen(false, "the window's X");
+    bool ask = g_focus > 0;   // the first setting asks for the focus (a window's first frames drop it)
+    if (ask)
+        g_focus--;
+    DrawSettings(ask);
     int n = fci_mods_count();
+    ImGui::SeparatorText("Mods");
     ImGui::TextDisabled("A choice takes effect at the next level change or after Quit to Main Menu.");
     if (fci_mods_pending())
         ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f),
                            "Changed: load a level or go to the main menu to see it.");
-    ImGui::Separator();
     if (!n) {
         ImGui::TextWrapped("No mods found in %s", fci_mods_folder());
     } else {
@@ -158,23 +215,15 @@ void DrawMenu()
         std::sort(groups.begin(), groups.end(), [](const std::string& a, const std::string& b) {
             return a.empty() != b.empty() ? !a.empty() : a < b;   // the ungrouped last
         });
-        bool ask = g_focus > 0;   // for the first mod only
-        if (ask)
-            g_focus--;
         for (const std::string& g : groups) {
             ImGui::SeparatorText(g.empty() ? "Other" : g.c_str());
             for (int i = 0; i < n; i++) {
                 if (g != fci_mods_group(i))
                     continue;
                 ImGui::PushID(i);
-                bool on = fci_mods_enabled(i), focus = ask;
-                ask = false;
+                bool on = fci_mods_enabled(i);
                 if (ImGui::Checkbox(fci_mods_name(i), &on))
                     fci_mods_set(i, on);
-                if (focus) {   // the controller's first press acts on the first mod
-                    ImGui::SetFocusID(ImGui::GetItemID(), ImGui::GetCurrentWindow());
-                    ImGui::GetCurrentContext()->NavCursorVisible = true;
-                }
                 if (*State(i)) {
                     ImGui::SameLine();
                     ImGui::TextDisabled("(%s)", State(i));

@@ -107,6 +107,41 @@
       "prehook",
       "the HUD's compass strip (eax = HUD, [esp+4] = yaw + 90; adds the HUD's +0x328, which Game.SetCompassOffset sets at 000907E8), Instincts' 001AA440, called by the HUD's update (00137D4E): north for the Halo rifles' compass (fci_counter.c, re/notes/WEAPONS.md)",
       "001AA440"
+    ],
+    "sub_000B648F": [
+      "gate",
+      "the bullet hit (eax = weapon; hit, params, first bullet; ret 0xC), as Instincts' 000EBEE0 (hit +0x24 damage, +0x28 target, +0x34 shooter; OnHit 000B3F84, then the target's OnDamage 000B6780): the weapon strength / enemy damage for its table (fci_damage.c, re/notes/WEAPONS.md)",
+      "000EBEE0"
+    ],
+    "sub_000B3F84": [
+      "gate",
+      "the bullet hit's OnHit scripts (table, params), as Instincts' 000E89D0: after them the table's damage is scaled for the target's OnDamage (fci_damage.c)",
+      "000E89D0"
+    ],
+    "sub_001E7AEE": [
+      "prehook",
+      "the script object's SetValue(key, float) (vtable 004D5308 +0x34; thiscall, ret 8), as Instincts' 002985A0: the explosion's per-target damage (from 0008EABF) scaled (fci_damage.c)",
+      "002985A0"
+    ],
+    "sub_0005D370": [
+      "gate",
+      "the melee attack (ecx = the attacker's player object, eax = direction; 3 args, ret 0xC), as Instincts' 0007A1B0: its melee_damage (+0x1B0) scaled for the call (fci_damage.c)",
+      "0007A1B0"
+    ],
+    "sub_00328B68": [
+      "gate",
+      "a decal's light colour at its placing (eax = 3D engine; out, position; ret 8), as Instincts' 00460E20, only from the decal manager 0032409E: one half for a blood splat, drawn as a stain (fci_blood.c, re/notes/BLOOD.md)",
+      "00460E20"
+    ],
+    "sub_001AC3B7": [
+      "prehook",
+      "the renderer's quad batch (ebx = texture, esi = batch; count, state, flags), as Instincts' 0023FBB0: the decal manager's world splats (from 0032490B) get the stain state (fci_blood.c)",
+      "0023FBB0"
+    ],
+    "sub_001B6678": [
+      "prehook",
+      "the renderer's terrain decal batch (eax = texture, ebx = batch, ecx = count; state, flags), as Instincts' 0024D470: the splats laid onto the terrain (from 00324B75) get the stain state (fci_blood.c)",
+      "0024D470"
     ]
   },
   "evidence": "Exploratory Evolution profile: descriptor helper by masked bytes (unique match); code end = BINKDATA end (as Instincts' 0070C6E4).",
@@ -166,6 +201,98 @@
     "FCI_BLOOD_KIND_AT": [
       "0x00000040",
       "the dispatcher's hit kind (its ebp+0xC) above the decal placement's return address: ebp-0x10 locals, 3 saved registers, 5 arguments, the return address"
+    ],
+    "FCI_DAMAGE_HIT": [
+      "0x000B648F",
+      "the bullet hit, as Instincts' 000EBEE0 (called from 000B5AFE)"
+    ],
+    "FCI_DAMAGE_ONHIT": [
+      "0x000B3F84",
+      "its OnHit scripts' call (000B6767), as Instincts' 000E89D0"
+    ],
+    "FCI_DAMAGE_MELEE": [
+      "0x0005D370",
+      "the melee attack, as Instincts' 0007A1B0 (MeleeAttack script, 0005D48B)"
+    ],
+    "FCI_DAMAGE_EXPLOSION_RET": [
+      "0x0008EABF",
+      "the explosion's SetValue(\"damage\", per-target damage) call (0008EABC), as Instincts' 000B672B"
+    ],
+    "FCI_DAMAGE_EXPLOSION_SHOOTER_EBP": [
+      "0x00000001",
+      "the explosion code's shooter is in its ebp frame (0008EA84)"
+    ],
+    "FCI_DAMAGE_EXPLOSION_SHOOTER_AT": [
+      "0xFFFFFFC0",
+      "ebp - 0x40, the shooter entity (0008EA84, the table's shooter)"
+    ],
+    "FCI_DAMAGE_EXPLOSION_TARGET_EBX": [
+      "0x00000001",
+      "the explosion's target entity in ebx (0008E9ED, its OnDamage at 0008EBFD)"
+    ],
+    "FCI_DAMAGE_KEY": [
+      "0x004B034C",
+      "the game's \"damage\" string, the hit tables' key (000B6634)"
+    ],
+    "FCI_DAMAGE_GAME": [
+      "0x0056B594",
+      "the game object; its player slots at +0x2C (0003C6E9), as Instincts' 006B3984 +0x28"
+    ],
+    "FCI_DAMAGE_PLAYER_SLOT": [
+      "0x0000002C",
+      "the first player slot; its entity id at +0x30 (0003C6F1)"
+    ],
+    "FCI_DAMAGE_HEALTH": [
+      "0x00000178",
+      "the player object's health, the script property cnt.health (00094689)"
+    ],
+    "FCI_DAMAGE_MELEE_DAMAGE": [
+      "0x000001B0",
+      "the player object's melee_damage (000948D8)"
+    ],
+    "FCI_BLOOD_ENGINE3D": [
+      "0x0056B510",
+      "the 3D engine, as Instincts' 006B3900; its decal manager at +0x2C4 (00334965)"
+    ],
+    "FCI_BLOOD_QUAD_BATCH_RET": [
+      "0x00324910",
+      "the decal drawing's (00324599) quad batch call 0032490B, as Instincts' 0045B5C7"
+    ],
+    "FCI_BLOOD_QUAD_OWNER_EBP": [
+      "0x00000001",
+      "the drawn decals' owner is in the drawing's ebp frame"
+    ],
+    "FCI_BLOOD_QUAD_OWNER_AT": [
+      "0x00000078",
+      "ebp + 0x78, the owner tested at 0032488A"
+    ],
+    "FCI_BLOOD_QUAD_STATE_AT": [
+      "0x00000008",
+      "the quad batch's arguments: count, state, flags; the texture in ebx (003248FB)"
+    ],
+    "FCI_BLOOD_QUAD_TEXTURE_AT": [
+      "0x00000000",
+      "in ebx"
+    ],
+    "FCI_BLOOD_TERRAIN_BATCH_RET": [
+      "0x00324B7A",
+      "the terrain decal path's (00324A75) batch call 00324B75, as Instincts' 0045B889"
+    ],
+    "FCI_BLOOD_TERRAIN_STATE_AT": [
+      "0x00000004",
+      "the terrain batch's arguments: state, flags; the texture in eax (00324B68)"
+    ],
+    "FCI_BLOOD_TERRAIN_TEXTURE_AT": [
+      "0x00000000",
+      "in eax"
+    ],
+    "FCI_BLOOD_LIGHT_OUT_AT": [
+      "0x00000004",
+      "the light colour's out vector, its first argument (00324528)"
+    ],
+    "FCI_BLOOD_LIGHT_ARGS": [
+      "0x00000008",
+      "out and position, ret 8"
     ]
   }
 }

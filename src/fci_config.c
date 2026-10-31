@@ -41,6 +41,8 @@ static const struct {
         {"gfx-foliage-lod", "RECOMP_CVAR_e_obj_sprite_switch_dist_ratio"},
         {"gfx-blood-splats", "RECOMP_FCI_BLOOD_SPLATS"},
         {"gfx-blood-splats-size", "RECOMP_FCI_BLOOD_SPLATS_SIZE"},
+        {"gfx-blood-splats-life", "RECOMP_FCI_BLOOD_SPLATS_LIFE"},
+        {"gfx-blood-splats-lit", "RECOMP_FCI_BLOOD_SPLATS_LIT"},
         {"controls-mouse-keyboard", "RECOMP_KEYBOARD"},
         {"mods-menu-key", "RECOMP_FCI_MODS_KEY"},
         {"controls-walk-speed", "RECOMP_WALK_SCALE"},

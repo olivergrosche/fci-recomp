@@ -155,6 +155,43 @@ REPLACE = {
         "character's flesh decal, blood splats on the floor below and the wall behind (fci_blood.c, "
         "re/notes/BLOOD.md)",
     ),
+    "sub_00460E20": (
+        "gate",
+        "a decal's light colour at its placing (edi = out, [esp+4] = position, esi = 3D engine; ret 4), only "
+        "from the decal manager 0045AA60: one half for a blood splat, drawn as a stain (fci_blood.c, "
+        "re/notes/BLOOD.md)",
+    ),
+    "sub_0023FBB0": (
+        "prehook",
+        "the renderer's quad batch (esi = batch; count, texture, state, flags; ret 0x10): the decal manager's "
+        "world splats (from 0045B5C2) get the stain state, blend 7 with the alpha test (fci_blood.c)",
+    ),
+    "sub_0024D470": (
+        "prehook",
+        "the renderer's terrain decal batch (esi = batch; count, texture, state, flags): the decal manager's "
+        "splats laid onto the terrain (from 0045B884) get the stain state (fci_blood.c)",
+    ),
+    "sub_000EBEE0": (
+        "gate",
+        "the bullet hit (ebx = weapon; hit, params, first bullet; ret 0xC): builds the hit table, runs the "
+        "weapon's OnHit scripts and the target's OnDamage; the weapon strength / enemy damage for its table "
+        "(fci_damage.c, re/notes/WEAPONS.md)",
+    ),
+    "sub_000E89D0": (
+        "gate",
+        "the bullet hit's OnHit scripts (esi = weapon; table, params): after them the table's damage is "
+        "scaled for the target's OnDamage (fci_damage.c)",
+    ),
+    "sub_002985A0": (
+        "prehook",
+        "the script object's SetValue(key, float) (vtable 0061DFD8 +0x34; thiscall, ret 8): the explosion's "
+        "per-target damage (from 000B672B) scaled (fci_damage.c)",
+    ),
+    "sub_0007A1B0": (
+        "gate",
+        "the melee attack (ecx = the attacker's player object, eax = direction; 3 args, ret 0xC), which runs "
+        "the MeleeAttack script: its melee_damage (+0x1A4) scaled for the call (fci_damage.c)",
+    ),
     "sub_0021FFA0": (
         "gate",
         "a menu background video's update (eax = video, ret 4): skipped until its next frame is due by the "

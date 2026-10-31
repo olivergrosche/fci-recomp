@@ -3,6 +3,7 @@
  *   <exe folder>\mods\<id>\mod.ini                name, group, description, credit (UTF-8, all optional)
  *   <exe folder>\mods\<id>\<archive>\<path>       a file in place of the archive's: weaponpack\animations\...
  *   <exe folder>\mods\enabled.txt                 the switched-on mods, an id a line; a later one wins
+ *   <exe folder>\mods\settings.ini                the menu's settings: weapon-strength, enemy-damage (percent)
  *
  * <archive> is a .dat of the game folder named without its extension (weaponpack, or
  * levels\21_DUNEA\21_dunea for a level's). An archive names its files only by the CRC-32 of the lower-case
@@ -291,6 +292,77 @@ static void save_choice(void)
     MoveFileExW(tmp, path, MOVEFILE_REPLACE_EXISTING);
 }
 
+/* ---- the settings ---- */
+
+static volatile LONG weapon_strength = 100, enemy_damage = 100; /* percent; the menu sets, the game reads */
+
+static int strength_value(int percent)
+{
+    percent = (percent + FCI_STRENGTH_STEP / 2) / FCI_STRENGTH_STEP * FCI_STRENGTH_STEP;
+    return percent < FCI_STRENGTH_MIN   ? FCI_STRENGTH_MIN
+           : percent > FCI_STRENGTH_MAX ? FCI_STRENGTH_MAX
+                                        : percent;
+}
+
+static void load_settings(void)
+{
+    WCHAR path[MAX_PATH];
+    char line[256];
+    FILE *f;
+    swprintf_s(path, MAX_PATH, L"%s\\settings.ini", mods_w);
+    if (!(f = _wfopen(path, L"rb")))
+        return;
+    while (fgets(line, sizeof line, f)) {
+        char key[64];
+        int value;
+        if (sscanf(line, " %63[a-z-] = %d", key, &value) != 2)
+            continue;
+        if (!strcmp(key, "weapon-strength"))
+            weapon_strength = strength_value(value);
+        else if (!strcmp(key, "enemy-damage"))
+            enemy_damage = strength_value(value);
+    }
+    fclose(f);
+    fprintf(stderr, "[FCI] settings: weapon strength %ld %%, enemy damage %ld %%\n", weapon_strength,
+            enemy_damage);
+}
+
+static void save_settings(void)
+{
+    WCHAR path[MAX_PATH], tmp[MAX_PATH];
+    FILE *f;
+    CreateDirectoryW(mods_w, NULL);
+    swprintf_s(path, MAX_PATH, L"%s\\settings.ini", mods_w);
+    swprintf_s(tmp, MAX_PATH, L"%s\\settings.ini.new", mods_w);
+    if (!(f = _wfopen(tmp, L"wb"))) {
+        fprintf(stderr, "[FCI] settings: cannot write %S\n", tmp);
+        return;
+    }
+    fputs("; the mod menu's settings (F1), in percent of the game's own\r\n", f);
+    fprintf(f,
+            "; the damage Jack's weapons deal to characters: bullets, melee, his explosions\r\n"
+            "weapon-strength = %ld\r\n",
+            weapon_strength);
+    fprintf(f, "; the damage others deal to Jack\r\nenemy-damage = %ld\r\n", enemy_damage);
+    fclose(f);
+    MoveFileExW(tmp, path, MOVEFILE_REPLACE_EXISTING);
+}
+
+int fci_mods_weapon_strength(void) { return weapon_strength; }
+int fci_mods_enemy_damage(void) { return enemy_damage; }
+
+void fci_mods_set_strengths(int weapon, int enemy)
+{
+    weapon = strength_value(weapon);
+    enemy = strength_value(enemy);
+    if (weapon == weapon_strength && enemy == enemy_damage)
+        return;
+    InterlockedExchange(&weapon_strength, weapon);
+    InterlockedExchange(&enemy_damage, enemy);
+    save_settings();
+    fprintf(stderr, "[FCI] settings: weapon strength %d %%, enemy damage %d %%\n", weapon, enemy);
+}
+
 /* ---- merging ---- */
 
 typedef struct {
@@ -531,6 +603,7 @@ void fci_mods_init(const char *game_dir)
     }
     utf8(mods_w, mods_utf8, sizeof mods_utf8);
     swprintf_s(cache_w, MAX_PATH, L"%s\\.cache", mods_w);
+    load_settings(); /* with no mods too */
     scan();
     if (!nmods)
         return;

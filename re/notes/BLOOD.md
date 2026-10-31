@@ -85,9 +85,9 @@ the hit point 3 m down and 3 m on along the shot (the hit normal faces the shoot
 it), and where they meet the world it calls the engine's decal routine with no entity, as for a bullet hole:
 the flesh decal's texture (with the blood mods the game's splat in the mod's colour, `halo-blood-red` the
 same splat red; without a blood mod the game's small red wound mark), a random turn, the size by the hit
-(big 1.0 m, medium 0.75, small 0.55, each +-20 %, times gfx-blood-splats-size) and the life value 30
-(bullet holes 15, the mark on a body 2). The splats lay flat on the ground and stayed at least 30 s in the
-runs.
+(big 1.0 m, medium 0.75, small 0.55, each +-20 %, times gfx-blood-splats-size) and a life of 300 s
+(gfx-blood-splats-life; bullet holes 15, the mark on a body 2; see "The decal manager"). The splats lay flat on
+the ground.
 
 | | Instincts | Evolution |
 |---|---|---|
@@ -101,9 +101,10 @@ runs.
 A ray hit is FC1's ray_hit (0x34 bytes: dist, collider, part, part id, surface, point +0x14, normal +0x20,
 terrain, next); the first is the solid hit. The hook saves and restores the guest registers, the XMM
 registers and the x87 stack around its calls. Limits: one floor and one wall splat a hit, none within 0.3 m
-of the last 32, at most 10 a second; past that the engine's decal manager keeps its own pool (its size not
-decoded; with 16 splats down at once nothing was lost). fci.ini `gfx-blood-splats = 0` switches it off,
-`gfx-blood-splats-size` scales it; RECOMP_FCI_BLOOD_SPLATS_LOG=1 prints each hit and splat.
+of the last 32, at most 10 a second. fci.ini `gfx-blood-splats = 0` switches it off, `gfx-blood-splats-size`
+scales it, `gfx-blood-splats-life` sets how long one stays (300 s, up to 3600); RECOMP_FCI_BLOOD_SPLATS_LOG=1
+prints each hit and splat and counts the world's decals (below), RECOMP_FCI_BLOOD_SPLATS_TEST=1 (a test aid)
+puts a splat 0.6 m beside every bullet hole on the world.
 
 Checked in the game (test installs, the user's display options, the Elite blood mods): Instincts' 02_Native
 from the user's save, Elites hit on the jungle path at 10 to 15 m: blue-violet splats on the path's edge and
@@ -112,6 +113,65 @@ ingame-splats-before-after.png); the log puts them 0.2 to 1.4 m below the hits, 
 opening ride: splats on the road at the gate (log), drawn as world decals; no frame caught them in view.
 No splat on a wall yet: the fights in these two places had no wall within 3 m behind the target (the log
 says so per hit), and on a low hit the shot's ray meets the ground behind.
+
+## The decal manager
+
+Found 2026-10-31 from Instincts' XBE (0046FFD0 down) and the log's count of the decals in play.
+
+The decal routine (0046FFD0) builds a decal: position, normal, a random turn, the life, 0, the size, the owner
+entity (0 for the world), the part, the texture, and hands it to the 3D engine's decal manager
+([[006B3900]+0x2C4], Evolution [[0056B510]+0x2C4]; 0045AA60). That keeps every decal in one std::multimap keyed
+by the owner (a node: +0xC the owner, +0x34 its age, +0x38 its life, +0x4C a light colour, +0x50 the texture),
+with no size limit: nothing is dropped for room, so splats never push out bullet holes. Each frame 0045BAA0
+(from 001FCFC0, with the frame time) adds the frame time to every decal's age and erases a decal past its life:
+the life is in seconds. The drawing (0045B110, per owner) culls each decal against the view and fades it out
+over its last second (alpha = life - age, at most 1); a world decal larger than 0.2 m is laid onto the terrain's
+2 m grid (0045B770), a smaller one is a quad (0023FBB0), both batched by texture with the state 0x3311. The
+cost of a long life is the map walked once a frame and the decals in view drawn.
+
+The light colour is taken once, when the decal is placed (00460E20): inside a vis area that area's ambient,
+outdoors the level's ambient light (00460850, from the 3D engine's and the console's values, not from the place),
+the same for every outdoor decal wherever it lies (35343A in 02_Native's afternoon for splats and bullet holes
+alike).
+
+## Splats in light and shade
+
+The splats looked as bright in the shade as in the sun. A capture (02_Native, RECOMP_FCI_BLOOD_SPLATS_TEST=1 to
+put splats beside bullet holes in sun and shade) shows why: every world decal is drawn as texture x its light
+colour x 2, alpha blended (blend 1 302 303 in frame.txt: SRC_ALPHA, ONE_MINUS_SRC_ALPHA), the splats as terrain
+grid strips with the fixed-function vertex format 142, the bullet holes as quads with a vertex program, both with
+the same combiner and the one light colour above. Nothing in it follows the sun's shadow: the ground's shade comes
+with the terrain's own drawing, before the decals. The game's own decals are
+dark grey holes and scorches, which read as dirt in any light; a bright blue-violet splat over a dark shaded
+floor glows.
+
+The renderer's state word (Instincts 00243220, Evolution 001AEBA1; the batches carry 0x3311) picks the blend
+by its low four bits: 1 SRC_ALPHA / ONE_MINUS_SRC_ALPHA, 2 ONE / ONE, 3 subtract, 4 DST_COLOR / SRC_COLOR, 5
+DST_ALPHA / ONE_MINUS_DST_ALPHA, 6 SRC_ALPHA / ONE, 7 DST_COLOR / ZERO, 8 the reverse of 1, 10 max, 11 reverse
+subtract, 12 DST_COLOR / ONE, 13 ONE_MINUS_DST_COLOR / ONE, else opaque; bits 0x3800000 the alpha test
+(0x800000 from 0xFF up, 0x1000000 from 0xC0, 0x1800000 from 0x80, 0x2000000 from 0x20, 0x2800000 over 0,
+0x3000000 up to 0; none: over 0 with mode 1). These are NV2A registers (0x304 blend on, 0x344 and 0x348 the
+factors, 0x350 the equation, 0x300, 0x33C and 0x340 the alpha test).
+
+fci_blood.c draws the splats as a stain: prehooks on the two batches the decal drawing hands decals to (quads,
+Instincts 0023FBB0 from 0045B5C2, Evolution 001AC3B7 from 0032490B; terrain decals, 0024D470 from 0045B884,
+Evolution 001B6678 from 00324B75) give a world batch with the splat's texture the state 7 | 0x1800000: the frame
+times the texture's colour, cut to the splatter by the alpha test from 0x80. A gate on the light colour (00460E20,
+Evolution 00328B68) answers one half while a splat is being placed, so the colour is the texture's own. The ground
+under a splat keeps its light and shadow and takes the blood's colour; marks on bodies keep the game's way.
+`gfx-blood-splats-lit = 0` (RECOMP_FCI_BLOOD_SPLATS_LIT) switches back. The look changes: a stain darker than the
+ground in the sun, where before it lay over it.
+
+A world decal over 0.2 m is laid onto the terrain's grid whatever it was placed on, so a big splat on a wall or a
+floor of planks would show on the terrain under it. A splat whose ray met an object (the ray hit's bTerrain at
++0x2C clear) is kept at 0.19 m, a quad on the object.
+
+Checked (Instincts' 02_Native, the test aid, the same steps before and after, captures compared): before, the splats under a tree shone blue-violet on the near-black ground; after, they
+are a dark navy stain there and blue on the sunlit path, drawn with blend 1 306 0 (DST_COLOR, ZERO).
+
+Checked (Instincts' 02_Native, the user's save, RECOMP_FCI_BLOOD_SPLATS_LOG=1): splats placed at 300 s were still
+in the map 84 s later while the bullet holes around them came and went with their 15 s (86 world decals, then
+32 half a minute later).
 
 ## The mods (tools/blood_recolor.py)
 
@@ -172,8 +232,7 @@ the library's tint and the pool texture, which 01_Beach's meat pieces share), th
 
 - In the game: Evolution's bigger sprays (no hit on a frame), the sapper explosion (levels 10, 11, 13).
 - Splats (fci_blood.c): a wall splat and an Evolution splat in view not seen in the game yet; knife hits
-  (sub_0046FF90, the slash decal) leave none; without a blood mod the splat is the small wound mark; the
-  decal manager's pool size and what the life value (2, 15, 30) counts are not decoded.
+  (sub_0046FF90, the slash decal) leave none; without a blood mod the splat is the small wound mark.
 - The size argument of the blood table (damage, weapon or distance) and the rest of a material entry.
 - Per-creature blood (an engine hook on sub_0046F9B0 that picks the effect by what was hit, and new effect
   entries in the libraries); Jack's underwater cloud and the scripted human blood would then stay red.

@@ -22,6 +22,15 @@ void fci_mods_set(int i, int on);    /* on also switches off what conflicts with
 int fci_mods_pending(void);          /* the choice differs from what this instance runs with */
 const char *fci_mods_folder(void);   /* where the mods are looked for */
 
+/* The menu's settings (mods\settings.ini, read at start, saved at once, in effect at once; with no mods
+ * too), in percent: the damage Jack deals to characters and the damage others deal to him (fci_damage.c) */
+#define FCI_STRENGTH_MIN  25
+#define FCI_STRENGTH_MAX  200
+#define FCI_STRENGTH_STEP 5
+int fci_mods_weapon_strength(void);
+int fci_mods_enemy_damage(void);
+void fci_mods_set_strengths(int weapon, int enemy); /* rounded to the step, kept in range */
+
 #ifdef __cplusplus
 }
 #endif
