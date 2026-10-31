@@ -2,6 +2,7 @@
  *
  *   <exe folder>\mods\<id>\mod.ini                name, group, description, credit (UTF-8, all optional)
  *   <exe folder>\mods\<id>\<archive>\<path>       a file in place of the archive's: weaponpack\animations\...
+ *   <exe folder>\mods\<id>\particles-add\*.xml    particle effects added to every level's library (below)
  *   <exe folder>\mods\enabled.txt                 the switched-on mods, an id a line; a later one wins
  *   <exe folder>\mods\settings.ini                the menu's settings: weapon-strength, enemy-damage (percent)
  *
@@ -26,8 +27,9 @@
 #include "fci_mods.h"
 
 #define MAX_MODS     256
-#define MAX_ARCHIVES 64
+#define MAX_ARCHIVES 128 /* every level's, when a mod adds particle effects */
 #define FIELD        512
+#define ADDS_DIR     L"particles-add" /* a mod's folder of particle effects for every level's library */
 
 typedef struct {
     int archive;   /* into archives[] */
@@ -39,6 +41,8 @@ typedef struct {
     char id[128], name[FIELD], group[FIELD], description[2048], credit[FIELD];
     Replacement *files;
     int nfiles, enabled, active;
+    WCHAR **adds; /* particle effects for every level's library: <mod>\particles-add\*.xml */
+    int nadds;
 } Mod;
 
 typedef struct {
@@ -47,6 +51,8 @@ typedef struct {
     WCHAR host_fat[MAX_PATH];
     WCHAR cache_dat[MAX_PATH]; /* the merged copies, empty when no enabled mod touches it */
     WCHAR cache_fat[MAX_PATH];
+    uint32_t library;   /* the name of its particle library when the enabled mods add effects to it, else 0 */
+    volatile LONG lazy; /* 1: merged when the game first opens it (it only gets particle effects) */
 } Archive;
 
 static Mod mods[MAX_MODS];
@@ -111,6 +117,29 @@ static uint32_t name_hash(const WCHAR *inner)
 
 /* ---- the game's archives ---- */
 
+/* the archive named part (weaponpack, levels\02_Native\02_Native): its index, registered on first use; -1
+ * when the game folder has no such .dat */
+static int archive_named(const WCHAR *part)
+{
+    WCHAR dat[MAX_PATH];
+    for (int i = 0; i < narchives; i++)
+        if (!_wcsicmp(archives[i].rel, part))
+            return i;
+    swprintf_s(dat, MAX_PATH, L"%s\\%s.dat", game_w, part);
+    if (exists(dat) && narchives < MAX_ARCHIVES) {
+        Archive *a = &archives[narchives];
+        char guest[MAX_PATH * 3], u[MAX_PATH * 3];
+        wcscpy_s(a->rel, MAX_PATH, part);
+        utf8(part, u, sizeof u);
+        snprintf(guest, sizeof guest, "D:\\%s.dat", u);
+        xbox_translate_path(guest, a->host_dat, MAX_PATH);
+        snprintf(guest, sizeof guest, "D:\\%s.fat", u);
+        xbox_translate_path(guest, a->host_fat, MAX_PATH);
+        return narchives++;
+    }
+    return -1;
+}
+
 /* the archive a mod's file belongs to: the shortest leading part of its path that names a .dat in the game
  * folder; -1 when none does (a readme, say) */
 static int archive_of(const WCHAR *rel, const WCHAR **inner)
@@ -118,31 +147,30 @@ static int archive_of(const WCHAR *rel, const WCHAR **inner)
     WCHAR part[MAX_PATH];
     for (const WCHAR *p = rel; (p = wcschr(p, L'\\')) != NULL; p++) {
         size_t n = (size_t)(p - rel);
-        WCHAR dat[MAX_PATH];
+        int a;
         if (n >= MAX_PATH)
             return -1;
         wmemcpy(part, rel, n);
         part[n] = 0;
-        for (int i = 0; i < narchives; i++)
-            if (!_wcsicmp(archives[i].rel, part)) {
-                *inner = p + 1;
-                return i;
-            }
-        swprintf_s(dat, MAX_PATH, L"%s\\%s.dat", game_w, part);
-        if (exists(dat) && narchives < MAX_ARCHIVES) {
-            Archive *a = &archives[narchives];
-            char guest[MAX_PATH * 3], u[MAX_PATH * 3];
-            wcscpy_s(a->rel, MAX_PATH, part);
-            utf8(part, u, sizeof u);
-            snprintf(guest, sizeof guest, "D:\\%s.dat", u);
-            xbox_translate_path(guest, a->host_dat, MAX_PATH);
-            snprintf(guest, sizeof guest, "D:\\%s.fat", u);
-            xbox_translate_path(guest, a->host_fat, MAX_PATH);
+        if ((a = archive_named(part)) >= 0) {
             *inner = p + 1;
-            return narchives++;
+            return a;
         }
     }
     return -1;
+}
+
+/* a level's archive (levels\<dir>\<name>) holds the level's particle library as
+ * levels\<dir>\<dir>_DepLoadParticles.xml (re/notes/BLOOD.md); 0 for the other archives */
+static uint32_t library_of(const WCHAR *rel)
+{
+    WCHAR inner[MAX_PATH];
+    const WCHAR *dir = rel + 7, *end;
+    if (_wcsnicmp(rel, L"levels\\", 7) || !(end = wcschr(dir, L'\\')) || end == dir || wcschr(end + 1, L'\\'))
+        return 0;
+    swprintf_s(inner, MAX_PATH, L"levels\\%.*s\\%.*s_DepLoadParticles.xml", (int)(end - dir), dir,
+               (int)(end - dir), dir);
+    return name_hash(inner);
 }
 
 /* ---- the mods ---- */
@@ -205,6 +233,13 @@ static void add_files(Mod *m, const WCHAR *root, const WCHAR *rel)
             add_files(m, root, sub);
             continue;
         }
+        if (!_wcsnicmp(sub, ADDS_DIR L"\\", wcslen(ADDS_DIR) + 1) && wcslen(sub) > 4
+            && !_wcsicmp(sub + wcslen(sub) - 4, L".xml")) { /* effects for the levels' particle libraries */
+            swprintf_s(path, MAX_PATH, L"%s\\%s", root, sub);
+            m->adds = realloc(m->adds, sizeof(WCHAR *) * (m->nadds + 1));
+            m->adds[m->nadds++] = _wcsdup(path);
+            continue;
+        }
         if ((a = archive_of(sub, &inner)) < 0)
             continue;
         swprintf_s(path, MAX_PATH, L"%s\\%s", root, sub);
@@ -238,7 +273,7 @@ static void scan(void)
         swprintf_s(ini, MAX_PATH, L"%s\\mod.ini", root);
         read_ini(m, ini);
         add_files(m, root, L"");
-        if (m->nfiles)
+        if (m->nfiles || m->nadds)
             nmods++;
         else
             fprintf(stderr, "[FCI] mods: %s replaces no file of the game; left out\n", m->id);
@@ -368,6 +403,8 @@ void fci_mods_set_strengths(int weapon, int enemy)
 typedef struct {
     uint32_t offset, size, hash;
     const WCHAR *src; /* a replacement, or NULL for the game's own bytes */
+    uint8_t *mem;     /* or these: a particle library with the mods' effects */
+    uint32_t mem_size;
 } Entry;
 
 static int by_offset(const void *a, const void *b)
@@ -434,6 +471,201 @@ static int read_all(const WCHAR *path, uint8_t **out, DWORD *size)
     return 1;
 }
 
+/* ---- particle effects for every level's library ----
+ *
+ * A level's effects (blood, muzzle flashes, impacts) come from its archive's particle library, an XML file of
+ * <Particles Name="Lib.Effect"> elements under <ParticleLibrary>; scripts name them <group>.Lib.Effect, and a
+ * level looks every name up in its own library only (re/notes/BLOOD.md). A mod's particles-add\*.xml holds
+ * such elements (in a <ParticleLibrary> of its own or bare). They go into the library of every level's
+ * archive the game opens, after whatever replaced it (a blood mod's), so mods that add effects and mods that
+ * replace the library work together. A name the library already has stays the library's; of two mods adding
+ * the same name, the later one wins. */
+
+typedef struct {
+    const char *at; /* <Particles ... </Particles> */
+    size_t len;
+    char name[160];
+} Block;
+
+static Block *add_blocks; /* the enabled mods' effects, a name once */
+static int nadd_blocks;
+static uint64_t adds_key; /* their files, for the merged copies' digest */
+
+static const char *find_text(const char *t, const char *end, const char *s)
+{
+    size_t n = strlen(s);
+    for (; t + n <= end; t++)
+        if (!memcmp(t, s, n))
+            return t;
+    return NULL;
+}
+
+/* the top-level <Particles> elements of t[0..size), each with its name; their number */
+static int blocks_of(const char *t, size_t size, Block **out)
+{
+    const char *end = t + size, *start = NULL, *p = t;
+    int depth = 0, n = 0, cap = 0;
+    Block *b = NULL;
+    while ((p = memchr(p, '<', (size_t)(end - p))) != NULL) {
+        const char *close;
+        if (end - p >= 4 && !memcmp(p, "<!--", 4)) { /* a comment */
+            if (!(p = find_text(p + 4, end, "-->")))
+                break;
+            continue;
+        }
+        if (!(close = memchr(p, '>', (size_t)(end - p))))
+            break;
+        if (end - p > 10 && !memcmp(p, "<Particles", 10) && p[10] && strchr(" \t\r\n/>", p[10])) {
+            if (++depth == 1) {
+                const char *name = find_text(p, close, "Name=\"");
+                for (start = p; start > t && (start[-1] == ' ' || start[-1] == '\t'); start--)
+                    ; /* with its line's indent */
+                if (n == cap)
+                    b = realloc(b, sizeof *b * (cap = cap ? cap * 2 : 64));
+                b[n].name[0] = 0;
+                if (name) {
+                    const char *q = name + 6, *e = memchr(q, '"', (size_t)(close - q));
+                    if (e && e - q < (ptrdiff_t)sizeof b[n].name) {
+                        memcpy(b[n].name, q, (size_t)(e - q));
+                        b[n].name[e - q] = 0;
+                    }
+                }
+            }
+            if (close[-1] == '/')
+                depth--;
+        } else if (end - p > 11 && !memcmp(p, "</Particles", 11) && p[11] && strchr(" \t\r\n>", p[11])) {
+            depth--;
+        } else {
+            p = close + 1;
+            continue;
+        }
+        if (depth < 0)
+            break; /* not a library */
+        if (!depth && start) {
+            b[n].at = start;
+            b[n++].len = (size_t)(close + 1 - start);
+            start = NULL;
+        }
+        p = close + 1;
+    }
+    *out = b;
+    return n;
+}
+
+/* the enabled mods' effects (load_choice first) */
+static void load_additions(void)
+{
+    adds_key = 0xCBF29CE484222325ull;
+    for (int k = 0; k < norder; k++) {
+        Mod *m = &mods[order[k]];
+        for (int f = 0; f < m->nadds; f++) {
+            uint8_t *buf;
+            DWORD size;
+            Block *b;
+            int n;
+            if (!read_all(m->adds[f], &buf, &size)) {
+                fprintf(stderr, "[FCI] mods: cannot read %S\n", m->adds[f]);
+                continue;
+            }
+            adds_key = file_stamp(adds_key, m->adds[f]);
+            n = blocks_of((const char *)buf, size, &b); /* buf stays: the blocks point into it */
+            for (int i = 0; i < n; i++) {
+                int j;
+                if (!b[i].name[0]) {
+                    fprintf(stderr, "[FCI] mods: %S: a <Particles> without a Name; left out\n", m->adds[f]);
+                    continue;
+                }
+                for (j = 0; j < nadd_blocks && _stricmp(add_blocks[j].name, b[i].name); j++)
+                    ;
+                if (j < nadd_blocks)
+                    fprintf(stderr, "[FCI] mods: particle effect %s of %s in place of an earlier mod's\n",
+                            b[i].name, m->id);
+                else
+                    add_blocks = realloc(add_blocks, sizeof *add_blocks * ++nadd_blocks);
+                add_blocks[j] = b[i];
+            }
+            free(b);
+            if (!n)
+                fprintf(stderr, "[FCI] mods: %S holds no <Particles>\n", m->adds[f]);
+        }
+    }
+}
+
+/* lib with the effects it lacks before its closing </ParticleLibrary>, in *out (malloc); 0 when not a
+ * library or nothing to add */
+static int splice(const WCHAR *archive, const uint8_t *lib, DWORD size, uint8_t **out, uint32_t *out_size)
+{
+    const char *t = (const char *)lib, *end = t + size, *at = NULL, *q;
+    Block *have;
+    int nhave = blocks_of(t, size, &have), added = 0, kept = 0;
+    size_t total = size;
+    uint8_t *o;
+    for (q = t; (q = find_text(q, end, "</ParticleLibrary>")) != NULL; q++)
+        at = q;
+    if (!at) {
+        fprintf(stderr, "[FCI] mods: the particle library of %S has no </ParticleLibrary>; nothing added\n",
+                archive);
+        free(have);
+        return 0;
+    }
+    while (at > t && (at[-1] == ' ' || at[-1] == '\t')) /* the closing tag's line */
+        at--;
+    for (int i = 0; i < nadd_blocks; i++)
+        total += add_blocks[i].len + 2;
+    o = malloc(total + 2);
+    memcpy(o, t, (size_t)(at - t));
+    total = (size_t)(at - t);
+    if (total && o[total - 1] != '\n') {
+        o[total++] = '\r';
+        o[total++] = '\n';
+    }
+    for (int i = 0; i < nadd_blocks; i++) {
+        int j;
+        for (j = 0; j < nhave && _stricmp(have[j].name, add_blocks[i].name); j++)
+            ;
+        if (j < nhave) {
+            kept++;
+            continue;
+        }
+        memcpy(o + total, add_blocks[i].at, add_blocks[i].len);
+        total += add_blocks[i].len;
+        o[total++] = '\r';
+        o[total++] = '\n';
+        added++;
+    }
+    memcpy(o + total, at, (size_t)(end - at));
+    total += (size_t)(end - at);
+    free(have);
+    fprintf(stderr, "[FCI] mods: particle library of %S: %d effects added%s", archive, added,
+            kept ? "" : "\n");
+    if (kept)
+        fprintf(stderr, ", %d it has already (its own kept)\n", kept);
+    if (!added) {
+        free(o);
+        return 0;
+    }
+    *out = o;
+    *out_size = (uint32_t)total;
+    return 1;
+}
+
+static int read_range(const WCHAR *path, uint32_t offset, uint32_t size, uint8_t **out)
+{
+    HANDLE h = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+    LARGE_INTEGER at;
+    DWORD got = 0;
+    int ok;
+    if (h == INVALID_HANDLE_VALUE)
+        return 0;
+    at.QuadPart = offset;
+    *out = malloc(size ? size : 1);
+    ok = SetFilePointerEx(h, at, NULL, FILE_BEGIN) && ReadFile(h, *out, size, &got, NULL) && got == size;
+    CloseHandle(h);
+    if (!ok)
+        free(*out);
+    return ok;
+}
+
 /* the game's archive a with the enabled mods' files written into the cache; 1 when its copies are there */
 static int merge(int a)
 {
@@ -445,7 +677,7 @@ static int merge(int a)
     Entry *e;
     uint32_t n, total;
     HANDLE src, dst;
-    int ok = 1;
+    int ok = 1, changed = 0;
 
     key = file_stamp(key, ar->host_dat);
     key = file_stamp(key, ar->host_fat);
@@ -457,6 +689,8 @@ static int merge(int a)
                 key = file_stamp(key, m->files[f].src);
             }
     }
+    if (ar->library && nadd_blocks)
+        key = fnv(key, &adds_key, sizeof adds_key);
     wcscpy_s(name, MAX_PATH, ar->rel);
     for (WCHAR *p = name; *p; p++)
         if (*p == L'\\' || *p == L'/')
@@ -508,7 +742,27 @@ static int merge(int a)
                 e[total++].hash = m->files[f].hash;
             }
             e[i].src = m->files[f].src;
+            changed++;
         }
+    }
+    if (ar->library && nadd_blocks) { /* the mods' particle effects into the level's library */
+        uint32_t i;
+        uint8_t *lib;
+        DWORD size;
+        for (i = 0; i < total && e[i].hash != ar->library; i++)
+            ;
+        if (i == total)
+            fprintf(stderr, "[FCI] mods: %S has no particle library; no effects added\n", ar->rel);
+        else if (e[i].src ? read_all(e[i].src, &lib, &size)
+                          : (size = e[i].size, read_range(ar->host_dat, e[i].offset, e[i].size, &lib))) {
+            if (splice(ar->rel, lib, size, &e[i].mem, &e[i].mem_size))
+                changed++;
+            free(lib);
+        }
+    }
+    if (!changed) { /* nothing to merge: the game's own stays */
+        free(e);
+        return 0;
     }
     qsort(e, total, sizeof *e, by_offset);
 
@@ -523,7 +777,11 @@ static int merge(int a)
         uint64_t at = 0;
         for (uint32_t i = 0; ok && i < total; i++) {
             uint32_t offset = (uint32_t)at;
-            if (e[i].src) {
+            if (e[i].mem) {
+                DWORD put;
+                ok = WriteFile(dst, e[i].mem, e[i].mem_size, &put, NULL) && put == e[i].mem_size;
+                e[i].size = e[i].mem_size;
+            } else if (e[i].src) {
                 uint8_t *b;
                 DWORD size, put;
                 if (!read_all(e[i].src, &b, &size)) {
@@ -563,6 +821,8 @@ static int merge(int a)
             fclose(f);
         }
     }
+    for (uint32_t i = 0; i < total; i++)
+        free(e[i].mem);
     free(e);
     ok = ok && MoveFileExW(tmp_fat, ar->cache_fat, MOVEFILE_REPLACE_EXISTING)
          && MoveFileExW(tmp_dat, ar->cache_dat, MOVEFILE_REPLACE_EXISTING);
@@ -576,16 +836,62 @@ static int merge(int a)
 
 /* ---- the kernel's hook: the merged copies in place of the game's archives ---- */
 
+static SRWLOCK lazy_lock = SRWLOCK_INIT;
+
 static void host_path(xbox_host_char *path, DWORD cap)
 {
     for (int a = 0; a < narchives; a++) {
-        if (!archives[a].cache_dat[0])
+        Archive *ar = &archives[a];
+        int dat;
+        if (!ar->cache_dat[0] && !ar->lazy)
             continue;
-        if (!_wcsicmp(path, archives[a].host_dat))
-            wcscpy_s(path, cap, archives[a].cache_dat);
-        else if (!_wcsicmp(path, archives[a].host_fat))
-            wcscpy_s(path, cap, archives[a].cache_fat);
+        if (!(dat = !_wcsicmp(path, ar->host_dat)) && _wcsicmp(path, ar->host_fat))
+            continue;
+        if (ar->lazy) { /* a level's archive that only gets particle effects: merged on its first open */
+            AcquireSRWLockExclusive(&lazy_lock);
+            if (ar->lazy) {
+                if (!merge(a))
+                    ar->cache_dat[0] = 0;
+                else
+                    fprintf(stderr, "[FCI] mods: %S from %S\n", ar->rel, ar->cache_dat);
+                InterlockedExchange(&ar->lazy, 0);
+            }
+            ReleaseSRWLockExclusive(&lazy_lock);
+        }
+        if (ar->cache_dat[0])
+            wcscpy_s(path, cap, dat ? ar->cache_dat : ar->cache_fat);
+        return;
     }
+}
+
+/* every level's archive, for the mods' particle effects */
+static void add_levels(void)
+{
+    WCHAR pattern[MAX_PATH];
+    WIN32_FIND_DATAW dir;
+    HANDLE h;
+    swprintf_s(pattern, MAX_PATH, L"%s\\levels\\*", game_w);
+    if ((h = FindFirstFileW(pattern, &dir)) == INVALID_HANDLE_VALUE)
+        return;
+    do {
+        WCHAR inner[MAX_PATH];
+        WIN32_FIND_DATAW fd;
+        HANDLE g;
+        if (!(dir.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || dir.cFileName[0] == L'.')
+            continue;
+        swprintf_s(inner, MAX_PATH, L"%s\\levels\\%s\\*.dat", game_w, dir.cFileName);
+        if ((g = FindFirstFileW(inner, &fd)) == INVALID_HANDLE_VALUE)
+            continue;
+        do {
+            size_t n = wcslen(fd.cFileName);
+            if (n > 4 && !_wcsicmp(fd.cFileName + n - 4, L".dat")) {
+                swprintf_s(inner, MAX_PATH, L"levels\\%s\\%.*s", dir.cFileName, (int)(n - 4), fd.cFileName);
+                archive_named(inner);
+            }
+        } while (FindNextFileW(g, &fd));
+        FindClose(g);
+    } while (FindNextFileW(h, &dir));
+    FindClose(h);
 }
 
 void fci_mods_init(const char *game_dir)
@@ -613,12 +919,21 @@ void fci_mods_init(const char *game_dir)
         return;
     CreateDirectoryW(cache_w, NULL);
     SetFileAttributesW(cache_w, FILE_ATTRIBUTE_HIDDEN);
+    load_additions();
+    if (nadd_blocks) {
+        add_levels();
+        for (int a = 0; a < narchives; a++)
+            archives[a].library = library_of(archives[a].rel);
+        fprintf(stderr, "[FCI] mods: %d particle effects for every level's library\n", nadd_blocks);
+    }
     for (int a = 0; a < narchives; a++) {
         int used = 0;
         for (int k = 0; k < norder && !used; k++)
             for (int f = 0; f < mods[order[k]].nfiles && !used; f++)
                 used = mods[order[k]].files[f].archive == a;
-        if (used && !merge(a))
+        if (!used && archives[a].library)
+            archives[a].lazy = 1; /* merged when the game opens it (host_path) */
+        else if (used && !merge(a))
             archives[a].cache_dat[0] = 0;
         else if (used)
             fprintf(stderr, "[FCI] mods: %S from %S\n", archives[a].rel, archives[a].cache_dat);
@@ -629,7 +944,8 @@ void fci_mods_init(const char *game_dir)
         for (int f = 0; f < m->nfiles; f++)
             if (!archives[m->files[f].archive].cache_dat[0])
                 m->active = 0;
-        fprintf(stderr, "[FCI] mods: %s (%d files)%s\n", m->id, m->nfiles, m->active ? "" : " NOT active");
+        fprintf(stderr, "[FCI] mods: %s (%d files, %d particle files)%s\n", m->id, m->nfiles, m->nadds,
+                m->active ? "" : " NOT active");
     }
     g_xbox_host_path_hook = host_path;
 }
@@ -647,12 +963,37 @@ int fci_mods_enabled(int i) { return mods[i].enabled; }
 int fci_mods_active(int i) { return mods[i].active; }
 const char *fci_mods_folder(void) { return mods_utf8; }
 
+/* two files of the same bytes (the hooked BasicWeapon several weapon mods ship) */
+static int same_bytes(const WCHAR *x, const WCHAR *y)
+{
+    WIN32_FILE_ATTRIBUTE_DATA a, b;
+    uint8_t *p, *q;
+    DWORD n, m;
+    int same;
+    if (!GetFileAttributesExW(x, GetFileExInfoStandard, &a)
+        || !GetFileAttributesExW(y, GetFileExInfoStandard, &b) || a.nFileSizeLow != b.nFileSizeLow
+        || a.nFileSizeHigh != b.nFileSizeHigh || a.nFileSizeHigh || a.nFileSizeLow > (64u << 20))
+        return 0;
+    if (!read_all(x, &p, &n))
+        return 0;
+    if (!read_all(y, &q, &m)) {
+        free(p);
+        return 0;
+    }
+    same = n == m && !memcmp(p, q, n);
+    free(p);
+    free(q);
+    return same;
+}
+
+/* both replace a file, each with other bytes */
 static int replace_same(int i, int j)
 {
     for (int a = 0; a < mods[i].nfiles; a++)
         for (int b = 0; b < mods[j].nfiles; b++)
             if (mods[i].files[a].archive == mods[j].files[b].archive
-                && mods[i].files[a].hash == mods[j].files[b].hash)
+                && mods[i].files[a].hash == mods[j].files[b].hash
+                && !same_bytes(mods[i].files[a].src, mods[j].files[b].src))
                 return 1;
     return 0;
 }

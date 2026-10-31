@@ -19,8 +19,15 @@ The config (paths relative to it): the "lua" part of a weapon mod's config, or t
     "out": "../../mods/instincts/halo-needler/lua",
     "set": {"FireParams[*].MuzzleLight.color": [1.0, 0.35, 0.85],      for every script below
             "FireParams[*].MuzzleParticle.bulletCases": null},
-    "scripts": {"P90": {"FireParams[1].BulletTrail.speed": 30}}        each script, with its own on top
+    "scripts": {"P90": {"FireParams[1].BulletTrail.speed": 30}},       each script, with its own on top
+    "effect_hooks": 1                                                  BasicWeapon with the effect hooks
   }
+
+With "effect_hooks" the mod gets BasicWeapon (every firearm's shared script) with two hooks: a fire mode's
+MuzzleGlow = {effect = "<group>.Lib.Effect", scale = 1} is spawned at the muzzle on each shot, its
+HitParticle where each bullet hits, both with Particle:SpawnEffect. A fire mode without them is as before;
+the effects come from the level's particle library, so a mod that names its own ships them in
+particles-add (README.md, Mods). Mods with the hooks ship the same file: they do not conflict.
 
 A path goes from the weapon's table: field names, [n] for a list's n-th item (from 1), * or [*] for any
 field or item. A value is a number, a string, null (the field is not set: gone), a list (the items of a
@@ -464,6 +471,147 @@ def patch(chunk, changes):
     return write(main), p.report
 
 
+# --- the effect hooks in BasicWeapon ----------------------------------------------------------------
+# Every firearm runs BasicWeapon's Client.OnFire and Client.OnHit (scripts\default\entities\weapons\
+# basicweapon.lua_compiled). The hooks add a particle effect a weapon's fire mode asks for, where the game has
+# none: FireParams[n].MuzzleGlow at the muzzle on each shot (along the shot), FireParams[n].HitParticle where
+# each bullet hits (along the surface's normal), both {effect = "<group>.Lib.Effect", scale = 1} and spawned
+# with Particle:SpawnEffect. A fire mode without them is as before.
+
+BASIC_WEAPON = WEAPONS + "basicweapon" + SUFFIX
+HOOKS = ("MuzzleGlow", "HitParticle")
+
+
+def _k(f, value):
+    raw = value.encode("latin-1") + b"\0"
+    for i, (t, v) in enumerate(f.k):
+        if t == STRING and v == raw:
+            return i
+    f.k.append((STRING, raw))
+    return len(f.k) - 1
+
+
+def _rk(f, value):
+    i = _k(f, value)
+    if RK_CONSTANT + i > RK_TOP:
+        raise ValueError(f"too many constants for {value!r}")
+    return RK_CONSTANT + i
+
+
+def insert_code(f, at, block):
+    """block put before f's instruction at; the old code's jumps are fixed (one to `at` lands on the block)
+    and the block's own jumps stay relative within it"""
+    if f.lines:
+        raise ValueError("code can only be put into a function without line info")
+    n, new = len(block), []
+    for pc, w in enumerate(f.code):
+        if pc == at:
+            new.extend(block)
+        if op(w) in JUMPS:
+            target = pc + 1 + bx_of(w) - SBX_BIAS
+            moved = pc if pc < at else pc + n
+            w = abx(op(w), a_of(w), (target if target <= at else target + n) - (moved + 1) + SBX_BIAS)
+        new.append(w)
+    f.code = new
+
+
+def effect_call(f, params, field, pos, direction, free, guard=None):
+    """code for: if R(params)[field] (and R(guard)) then Particle:SpawnEffect(pos, direction, t.effect,
+    t.scale) end; pos and direction(reg) give the code that puts them into reg, free is the first register
+    the function does not need there"""
+    t, fn = free, free + 1
+    body = [
+        abx(OP["GETGLOBAL"], fn, _k(f, "Particle")),
+        abc(OP["SELF"], fn, fn, _rk(f, "SpawnEffect")),
+        *pos(fn + 2),
+        *direction(fn + 3),
+        abc(OP["GETTABLE"], fn + 4, t, _rk(f, "effect")),
+        abc(OP["GETTABLE"], fn + 5, t, _rk(f, "scale")),
+        abc(OP["CALL"], fn, 5, 0),  # self and four arguments, no results
+    ]
+    head = [abc(OP["GETTABLE"], t, params, _rk(f, field)), abc(OP["TESTF"], t, t, 0), None]
+    if guard is not None:
+        head += [abc(OP["TESTF"], guard, guard, 0), None]
+    for i, w in enumerate(head):
+        if w is None:  # past the call
+            head[i] = abx(OP["CJMP"], 0, len(head) - (i + 1) + len(body) + SBX_BIAS)
+    f.header[4] = max(f.header[4], fn + 6)
+    return head + body
+
+
+def _client_function(main, name, test):
+    """the function BasicWeapon binds last under name (Client's comes after Server's) that passes test"""
+    found = None
+    for pc in range(len(main.code) - 1):
+        w, s = main.code[pc], main.code[pc + 1]
+        if (
+            op(w) == OP["CLOSURE"]
+            and op(s) == OP["SETTABLE"]
+            and a_of(s) == a_of(w)
+            and c_of(s) >= RK_CONSTANT
+            and main.k[c_of(s) - RK_CONSTANT] == (STRING, name.encode() + b"\0")
+        ):
+            found = main.protos[bx_of(w)]
+    if found is None or not test(found):
+        raise ValueError(f"BasicWeapon's {name} is not the one these hooks know")
+    return found
+
+
+def _gets(f, pc, reg, table, field):
+    w = f.code[pc]
+    return (
+        op(w) == OP["GETTABLE"]
+        and a_of(w) == reg
+        and b_of(w) == table
+        and c_of(w) >= RK_CONSTANT
+        and f.k[c_of(w) - RK_CONSTANT] == (STRING, field.encode() + b"\0")
+    )
+
+
+def effect_hooks(chunk):
+    """BasicWeapon's chunk with the hooks (as it is when it has them)"""
+    main = read(chunk)
+    if any((STRING, h.encode() + b"\0") in g.k for g in main.protos for h in HOOKS):
+        return chunk
+    # OnHit: R1 the hit (pos, normal), R3 FireParams[n]; everything ends at its one RETURN, the last
+    hit = _client_function(
+        main,
+        "OnHit",
+        lambda f: [op(w) for w in f.code].count(OP["RETURN"]) == 1
+        and op(f.code[-1]) == OP["RETURN"]
+        and any(_gets(f, pc, 4, 3, "damage_type") for pc in range(len(f.code)))
+        and any(_gets(f, pc, 2, 1, "shooter") for pc in range(len(f.code))),
+    )
+    block = effect_call(
+        hit,
+        3,
+        "HitParticle",
+        lambda r: [abc(OP["GETTABLE"], r, 1, _rk(hit, "pos"))],
+        lambda r: [abc(OP["GETTABLE"], r, 1, _rk(hit, "normal"))],
+        4,
+    )
+    insert_code(hit, len(hit.code) - 1, block)
+    # OnFire: R1 the shot (dir), R5 FireParams[n], R8 the muzzle; before it looks at BulletTrail, after the
+    # muzzle flash and light
+    fire = _client_function(
+        main, "OnFire", lambda f: any(_gets(f, pc, 13, 5, "BulletTrail") for pc in range(len(f.code)))
+    )
+    at = next(pc for pc in range(len(fire.code)) if _gets(fire, pc, 13, 5, "BulletTrail"))
+    block = effect_call(
+        fire,
+        5,
+        "MuzzleGlow",
+        lambda r: [abc(OP["MOVE"], r, 8, 0)],
+        lambda r: [abc(OP["GETTABLE"], r, 1, _rk(fire, "dir"))],
+        13,
+        guard=8,
+    )
+    insert_code(fire, at, block)
+    out = write(main)
+    read(out)
+    return out
+
+
 # --- lua.dat ------------------------------------------------------------------------------------------
 
 
@@ -534,6 +682,18 @@ def run_config(path, dry_run=False):
         for p, old, now in check(chunk, new, report):
             print(f"  {p}: {old} -> {now}")
             done.append((script, p, old, now))
+        print("  (dry run: nothing written)" if dry_run else f"  -> {target}")
+    if cfg.get("effect_hooks"):
+        rel, chunk = find(game, BASIC_WEAPON)
+        new = effect_hooks(chunk)
+        target = out / Path(*rel.lower().split("\\"))
+        print(f"BasicWeapon: {rel}: the effect hooks ({', '.join(HOOKS)})")
+        if not dry_run:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(new)
+            was, now = read(chunk), read(target.read_bytes())
+            if (was.code, was.k) != (now.code, now.k):  # the values come from the main function
+                raise ValueError(f"{target}: the hooks changed BasicWeapon's main function")
         print("  (dry run: nothing written)" if dry_run else f"  -> {target}")
     return done
 

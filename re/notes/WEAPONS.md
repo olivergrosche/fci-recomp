@@ -128,6 +128,35 @@ stack size grows when needed). Paths go from the weapon's table (`FireParams[*].
 reads every written file back and stops when anything else differs; `diff` shows what a mod's scripts change.
 The Halo weapon mods use it (fci-modsrc `halo/weapons`, `"lua"` in their configs).
 
+## Effect hooks (`"effect_hooks"`, BasicWeapon)
+
+Found 2026-10-31. The game has no field for an effect where a bullet hits (impacts come from
+`Game:ExecuteMaterialFX` by the surface's material, the same for every weapon) and only the attached
+`MuzzleParticle` at the muzzle. `basicweapon.lua_compiled` binds each handler twice, Server's then Client's
+(`BasicWeapon.Server.OnFire`, `BasicWeapon.Client.OnFire`, the same order in both games); the hooks go into
+Client's:
+
+| Hook | Where | Registers there | Call |
+|---|---|---|---|
+| `FireParams[n].HitParticle` | `Client.OnHit`, before its one RETURN (every path ends there) | R1 the hit (`pos`, `normal`), R3 `FireParams[n]` | `Particle:SpawnEffect(hit.pos, hit.normal, effect, scale)` |
+| `FireParams[n].MuzzleGlow` | `Client.OnFire`, right before it reads `BulletTrail` (after the muzzle flash and light) | R1 the shot (`dir`), R5 the fire mode's params, R8 the muzzle position | `Particle:SpawnEffect(muzzle, shot.dir, effect, scale)`, only with a muzzle position |
+
+Both are `{effect = "<group>.Lib.Effect", scale = 1}`; a fire mode without them runs as before (the hook tests
+the field first). Checked in both games: the Halo plasma mods' bursts appear where the shots hit (Instincts
+02_Native from the user save, Evolution 21_DUNEA), and a glow from `MuzzleGlow` shows at the muzzle, where the
+same effect as `MuzzleParticle` (attached to the weapon's muzzle bone) did not show in first person; an AI
+firing the weapon gets the glow too. The code goes in with every old jump moved past it (a jump to the RETURN lands on the hook),
+in registers free at that point (OnHit R4 up, OnFire R13 up, under the functions' stack sizes 17 and 31); the
+functions have no line info. `SpawnEffect`'s fifth argument (a colour) only scales the lighting of lit
+particles, so an additive effect cannot be tinted by it: a coloured effect is its own entry in the level's
+library (README.md, Mods: `particles-add`). Effect names are looked up in the level's library whatever the
+group (`GFX_Muzzleflash.Halo_FX.PlasmaPistol_Impact` finds `Halo_FX.PlasmaPistol_Impact`); only without a
+level library (the menus) does a group load `Particles\<group>.xml`. The Mortar's shell
+(`mortarshell.lua_compiled`, `ParticlesSystem.effectExplosionFire` on an object, `effectExplosionSmoke` on
+the ground, `effectExplosionWater`, `effectExplosionFly` every 0.03 s in flight) takes other effect names as
+ordinary fields. Every mod with the hooks ships the same BasicWeapon (from the same `lua.dat`), so they do not
+conflict (src/fci_mods.c treats two files of the same bytes as no conflict).
+
 # The magazine count and the heading (src/fci_counter.c)
 
 Found 2026-10-30 from both games' HUD code (the `CryInGame_Hud` page's element names in `.rdata` and their

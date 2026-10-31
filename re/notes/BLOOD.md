@@ -51,7 +51,9 @@ is in each level archive. Names: the archives store `levels\<level>\<level>_DepL
 list), `levels\<level>\<level>_DepLoadParticles.xml` (the particle library, `<Particles Name="lib.effect">`
 then effects of the same library by their name alone; an effect nests: its emitter `<Params>`, the `<Params>`
 of the particle each of its particles spawns, then `<Childs>` with more effects) and `particles\materials.dat`; dat2.py
-does not find these names yet (they are built from the level name in the code).
+does not find these names yet (they are built from the level name in the code). Every level archive of both
+games (70) has its library under that name. Effects other mods add (`particles-add`, README.md, Mods) go into
+a blood mod's library too, before its closing `</ParticleLibrary>`.
 
 ## Decals
 

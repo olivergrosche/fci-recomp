@@ -113,10 +113,18 @@ description = What it changes.
 credit = Who made what, under which license.
 ```
 
+A mod can also add particle effects to every level: `mods\<mod>\particles-add\*.xml` holds
+`<Particles Name="Lib.Effect">` effects as a level's particle library has them (in a `<ParticleLibrary>` or
+bare). When the game opens a level's archive they are added to its library, also on top of a mod that
+replaces the library (a blood mod), so both work together; an effect the library has already stays the
+library's, and of two mods that add the same name the later one wins. Scripts name them `<group>.Lib.Effect`
+with any of the game's groups (`GFX_Muzzleflash.Halo_FX.PlasmaPistol_Impact`; re/notes/WEAPONS.md, "Effect
+hooks"). Such a level's merged copy is made the first time the game opens it.
+
 In the game, the MODS entry of the main menu (below CHEATS MENU) and of the pause menu (in place of
 FRIENDS LIST, which needs Xbox Live), there with or without mods, F1 or Insert (`mods-menu-key` in
 `fci.ini`) or both sticks of a controller pressed together open the mod menu, which switches mods on and
-off (two mods that replace the same file are one or the other); Escape, B or Close go back. The game
+off (two mods that replace the same file with different bytes are one or the other); Escape, B or Close go back. The game
 keeps running underneath, without input, so open it from the pause menu or pause first. A choice takes
 effect when the game next opens its archives: at a level change or after Quit to Main Menu. The game
 folder itself is never changed: the archives the switched-on mods touch are merged into `mods\.cache`

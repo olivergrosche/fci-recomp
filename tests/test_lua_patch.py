@@ -313,3 +313,104 @@ def test_unknown_scripts_and_chunks_are_refused(tmp_path):
         lp.read(script()[:-3])
     assert lp.script_path("Blaster") == "scripts\\default\\entities\\weapons\\blaster.lua_compiled"
     assert lp.script_path("/Scripts/Default/GameRules.lua") == "Scripts\\Default\\GameRules.lua_compiled"
+
+
+# --- the effect hooks: a synthetic BasicWeapon laid out as the games' (Server's functions, then Client's) ---
+
+
+def function(code, k, protos=(), stack=20):
+    f = lp.Function()
+    f.source, f.header, f.lines, f.locals = None, [0, 0, 2, 0, stack], [], []
+    f.k, f.protos, f.code = [(lp.STRING, s.encode() + b"\0") for s in k], list(protos), list(code)
+    return f
+
+
+def rk(f, s):
+    return 250 + f.k.index((lp.STRING, s.encode() + b"\0"))
+
+
+def jump(o, at, to):
+    return lp.abx(OP[o], 0, to - (at + 1) + lp.SBX_BIAS)
+
+
+def basic_weapon():
+    hit = function([], ["shooter", "damage_type", "normal"], stack=17)
+    hit.code = [
+        lp.abc(OP["GETTABLE"], 2, 1, rk(hit, "shooter")),
+        lp.abc(OP["GETTABLE"], 4, 3, rk(hit, "damage_type")),
+        lp.abc(OP["TESTF"], 4, 4, 0),
+        jump("CJMP", 3, 5),  # to the RETURN
+        lp.abx(OP["LOADK"], 4, 2),
+        lp.abc(OP["RETURN"], 0, 0, 0),
+    ]
+    fire = function([], ["MuzzleLight", "BulletTrail"], stack=31)
+    fire.code = [
+        lp.abc(OP["GETTABLE"], 13, 5, rk(fire, "MuzzleLight")),
+        lp.abc(OP["TESTF"], 13, 13, 0),
+        jump("CJMP", 2, 4),  # to the BulletTrail test
+        lp.abx(OP["LOADK"], 13, 0),
+        lp.abc(OP["GETTABLE"], 13, 5, rk(fire, "BulletTrail")),
+        lp.abc(OP["RETURN"], 0, 0, 0),
+    ]
+    server_fire = function([lp.abc(OP["RETURN"], 0, 0, 0)], [])
+    main = function([], ["BasicWeapon", "OnFire", "OnHit"], [server_fire, fire, hit])
+    main.code = [
+        lp.abx(OP["GETGLOBAL"], 0, 0),
+        lp.abx(OP["CLOSURE"], 1, 0),
+        lp.abc(OP["SETTABLE"], 1, 0, rk(main, "OnFire")),
+        lp.abx(OP["CLOSURE"], 1, 1),
+        lp.abc(OP["SETTABLE"], 1, 0, rk(main, "OnFire")),
+        lp.abx(OP["CLOSURE"], 1, 2),
+        lp.abc(OP["SETTABLE"], 1, 0, rk(main, "OnHit")),
+        lp.abc(OP["RETURN"], 0, 0, 0),
+    ]
+    main.chunk_header = HEADER
+    return lp.write(main)
+
+
+def target(f, pc):
+    return pc + 1 + lp.bx_of(f.code[pc]) - lp.SBX_BIAS
+
+
+def names(f, pc):
+    w = f.code[pc]
+    return lp.OPS[lp.op(w)], lp.a_of(w), lp.b_of(w), lp.constant(f, lp.c_of(w) - 250) if lp.c_of(w) >= 250 else None
+
+
+def test_effect_hooks_spawn_what_a_fire_mode_asks_for_and_keep_the_old_jumps():
+    chunk = basic_weapon()
+    new = lp.effect_hooks(chunk)
+    main, was = lp.read(new), lp.read(chunk)
+    assert (main.code, main.k) == (was.code, was.k)
+    assert main.protos[0].code == was.protos[0].code  # Server's OnFire stays as it was
+    hit, fire = main.protos[2], main.protos[1]
+    # OnHit: before its RETURN, which the old jump now reaches through the hook
+    assert names(hit, 5) == ("GETTABLE", 4, 3, "HitParticle")
+    assert target(hit, 3) == 5
+    assert lp.OPS[lp.op(hit.code[-1])] == "RETURN" and target(hit, 7) == len(hit.code) - 1
+    call = next(pc for pc, w in enumerate(hit.code) if lp.op(w) == OP["CALL"])
+    assert names(hit, call - 2)[3] == "effect" and names(hit, call - 1)[3] == "scale"
+    assert lp.c_of(hit.code[call]) == 0 and lp.b_of(hit.code[call]) == 5
+    # OnFire: before the BulletTrail test, only with a muzzle position (R8)
+    at = next(pc for pc in range(len(fire.code)) if names(fire, pc) == ("GETTABLE", 13, 5, "BulletTrail"))
+    assert names(fire, 4) == ("GETTABLE", 13, 5, "MuzzleGlow") and target(fire, 2) == 4
+    assert lp.a_of(fire.code[7]) == 8 and target(fire, 6) == at and target(fire, 8) == at
+    assert fire.header[4] == 31 and hit.header[4] == 17
+    assert lp.effect_hooks(new) == new  # once only
+
+
+def test_effect_hooks_refuse_a_basic_weapon_they_do_not_know():
+    f = lp.read(basic_weapon())
+    f.protos[1].code[4] = lp.abc(OP["GETTABLE"], 12, 5, f.protos[1].code[4] >> 6 & 0x3FF)  # another register
+    with pytest.raises(ValueError, match="OnFire"):
+        lp.effect_hooks(lp.write(f))
+
+
+def test_run_config_writes_the_hooked_basic_weapon(tmp_path, capsys):
+    game(tmp_path, {"Blaster": script(), "BasicWeapon": basic_weapon()})
+    config = tmp_path / "mod.json"
+    config.write_text(json.dumps({"game": "game", "out": "mod", "scripts": {"Blaster": {}}, "effect_hooks": 1}))
+    lp.run_config(config)
+    written = tmp_path / "mod" / "scripts" / "default" / "entities" / "weapons" / "basicweapon.lua_compiled"
+    assert written.read_bytes() == lp.effect_hooks(basic_weapon())
+    assert "the effect hooks" in capsys.readouterr().out
