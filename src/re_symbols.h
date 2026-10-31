@@ -15,6 +15,8 @@
 #define RE_GAME_CAMERA_BUILDVIEWS 0x000F0500u  /* function, likely */
 #define RE_GAME_GAMEVIEW_ONACTION 0x000F67D0u  /* function, likely */
 #define RE_GAME_MENUPAGE_LOCALIZEAREA 0x00109170u  /* function, likely */
+#define RE_GAME_MPPAUSEPAGE_ONPRESS 0x00149FA0u  /* function, likely */
+#define RE_GAME_PAUSEPAGE_ONPRESS 0x0014B790u  /* function, verified */
 #define RE_GAME_MAINMENUPAGE_CONSTRUCT 0x0014DA50u  /* function, likely */
 #define RE_GAME_MAINMENUPAGE_HIDECHEATSDEBUG 0x0014E6F0u  /* function, verified */
 #define RE_GAME_MAINMENUPAGE_ONFOCUS 0x0014EE40u  /* function, verified */

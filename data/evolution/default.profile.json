@@ -82,6 +82,16 @@
       "the hit decal's placement (esi = material; entity, position, normal, part, life; cdecl), as Instincts' 0046FEF0 (gore byte 0056C6F1, decal textures 00568DA4): on a hit character's flesh decal, blood splats on the floor below and the wall behind (fci_blood.c, re/notes/BLOOD.md)",
       "0046FEF0"
     ],
+    "sub_000F92FF": [
+      "gate",
+      "the pause menu's press handler (eax = event, its +4 the element; the page on the stack; ret 4), as Instincts' 0014B790: B_LiveMenu (FRIENDS LIST) opens the mod menu in place of the friends page (fci_mainmenu.c, re/notes/MENUS.md)",
+      "0014B790"
+    ],
+    "sub_000F8405": [
+      "gate",
+      "the multiplayer pause menu's press handler, as Instincts' 00149FA0: B_LiveMenu opens the mod menu (fci_mainmenu.c)",
+      "0014B790"
+    ],
     "sub_0012C35F": [
       "prehook",
       "a vehicle drive (eax = vehicle), from the movement handler 0012C298: RECOMP_FCI_VEHTRACE (fci_vehdiag.c)"

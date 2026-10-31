@@ -192,6 +192,17 @@ REPLACE = {
         "the melee attack (ecx = the attacker's player object, eax = direction; 3 args, ret 0xC), which runs "
         "the MeleeAttack script: its melee_damage (+0x1A4) scaled for the call (fci_damage.c)",
     ),
+    "sub_0014B790": (
+        "gate",
+        "the pause menu's press handler (eax = event, its +4 the element; the page on the stack; ret 4): "
+        "B_LiveMenu (FRIENDS LIST) opens the mod menu in place of the friends page (fci_mainmenu.c, "
+        "re/notes/MENUS.md)",
+    ),
+    "sub_00149FA0": (
+        "gate",
+        "the multiplayer pause menu's press handler, as 0014B790: B_LiveMenu opens the mod menu (fci_mainmenu.c)",
+        "0014B790",
+    ),
     "sub_0021FFA0": (
         "gate",
         "a menu background video's update (eax = video, ret 4): skipped until its next frame is due by the "

@@ -1,6 +1,6 @@
 // FCI: the mod menu, a Dear ImGui overlay over the game (src/fci_mods.c holds the mods). F1 or Insert (fci.ini
-// mods-menu-key) or a controller's both sticks pressed together open and close it, and the main menu's MODS
-// entry opens it (src/fci_mainmenu.c); while it is open the game gets no input (a neutral pad, no keys, no
+// mods-menu-key) or a controller's both sticks pressed together open and close it, and the MODS entries of the
+// main menu and the pause menus open it (src/fci_mainmenu.c); while it is open the game gets no input (a neutral pad, no keys, no
 // mouse) and the menu takes the keyboard, the mouse and the controller. A choice is saved at once and takes
 // effect when the game next opens its archives (a level change, the main menu: a new instance). The settings
 // at the top (weapon strength, enemy damage: fci_damage.c) take effect at once, with no mods too.
@@ -361,11 +361,11 @@ bool fci_overlay_message(HWND w, UINT msg, WPARAM wp, LPARAM lp, LRESULT* result
 
 extern "C" int fci_overlay_open(void) { return g_open; }
 
-// the main menu's MODS entry was chosen (src/fci_mainmenu.c, from the game's thread)
-extern "C" void fci_overlay_open_from_menu(void)
+// a MODS entry was chosen, the main menu's or a pause menu's (src/fci_mainmenu.c, from the game's thread)
+extern "C" void fci_overlay_open_from_menu(const char* by)
 {
     if (g_ready)
-        SetOpen(true, "the main menu's MODS");
+        SetOpen(true, by);
     else
         std::fprintf(stderr, "[FCI] mod menu: MODS chosen, but the menu has no window\n");
 }

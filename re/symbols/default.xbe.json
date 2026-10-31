@@ -120,6 +120,12 @@
    "see": "notes/MENUS.md"},
   {"va": "0x0014E6F0", "name": "MainMenuPage_HideCheatsDebug", "kind": "function", "confidence": "verified",
    "evidence": "the last step of the page's start (0014E190, from 0014E8D0): finds B_CheatsDebug in P_Main (000665A0) and clears its shown (+0x18 bit 0) and selectable (+0x4C bit 1) bits; skipped, the button shows",
+   "see": "notes/MENUS.md"},
+  {"va": "0x0014B790", "name": "PausePage_OnPress", "kind": "function", "confidence": "verified",
+   "evidence": "eax = event, the page on the stack, ret 4; the in-game page's press (0014C1F0, vtable 00608F90 slot 2) hands it P_StartMenu's presses: B_Resume, B_Restart_Level, B_Revert_Save, B_Quit_to_Menu, B_CheatMenu, B_LiveMenu (the friends page [006B3440], offline [006B3438]); a gate on B_LiveMenu opens the mod menu",
+   "see": "notes/MENUS.md"},
+  {"va": "0x00149FA0", "name": "MpPausePage_OnPress", "kind": "function", "confidence": "likely",
+   "evidence": "as 0014B790 for the multiplayer pause page (vtable 00608E30, its press 0014A980): B_Resume, B_Options, B_Quit_to_Menu, B_LiveMenu",
    "see": "notes/MENUS.md"}
  ],
  "structs": {

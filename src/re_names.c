@@ -24,6 +24,8 @@ static const re_name re_names_game[] = {
     {0x000F0500u, "Camera_BuildViews"},
     {0x000F67D0u, "GameView_OnAction"},
     {0x00109170u, "MenuPage_LocalizeArea"},
+    {0x00149FA0u, "MpPausePage_OnPress"},
+    {0x0014B790u, "PausePage_OnPress"},
     {0x0014DA50u, "MainMenuPage_Construct"},
     {0x0014E6F0u, "MainMenuPage_HideCheatsDebug"},
     {0x0014EE40u, "MainMenuPage_OnFocus"},

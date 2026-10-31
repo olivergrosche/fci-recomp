@@ -2,7 +2,7 @@
 
 Images: both games' default.xbe. Found 2026-10-30 from the menus' names in `.rdata` and their references,
 the string tables and the menu package in `common.dat` (tools/dat2.py), and runs of tools/game_driver.py.
-The main menu's MODS entry (src/fci_mainmenu.c) is built on it.
+The MODS entries of the main menu and the pause menus (src/fci_mainmenu.c) are built on it.
 
 ## Packages, areas, elements
 
@@ -96,6 +96,25 @@ handler compares it with each name's CRC-32 in turn and acts on the first match:
 
 `B_CheatsDebug` has no case in either: its press does nothing.
 
+## The pause menus
+
+Package `CryInGame`, string table `InGameMenu.xml`, area `P_StartMenu`: RESUME (`B_Resume`), LOAD SAVEPOINT
+(`B_Revert_Save`), RESTART LEVEL (`B_Restart_Level`), OPTIONS (`B_Options`), FRIENDS LIST (`B_LiveMenu`),
+CHEATS MENU (`B_CheatMenu`), QUIT TO MAIN MENU (`B_Quit_to_Menu`), and `B_CheatDebug`, hidden by the page's
+activation (Instincts 0014CF10, vtable +0x58; Evolution 000F9CD6), which also keeps `B_LiveMenu`. The file
+has no `HelpText`: the pause menus show no help line. Both games, both pages:
+
+| Page | Instincts | Evolution |
+|---|---|---|
+| single player (with `P_GameOver`) | vtable 00608F90, constructor 0014AAE0; press 0014C1F0, which hands `P_StartMenu` to 0014B790 | press 000F9725, `P_StartMenu` to 000F92FF |
+| multiplayer (RESUME, OPTIONS, FRIENDS LIST, QUIT) | vtable 00608E30, constructor 00149690; press 0014A980 to 00149FA0 | 000F8960 to 000F8405 |
+
+The four handlers 0014B790, 00149FA0, 000F92FF and 000F8405 take eax = event (its +4 the element) and the page
+on the stack, ret 4; their callers ignore the result. Each compares the element's id with the buttons' names
+in turn. `B_LiveMenu` shows the Live friends page when signed in to Xbox Live (Instincts 00049090 asks; the
+page at [006B3440], Evolution [0056AFEC]) and otherwise the page that asks to sign in ([006B3438],
+[0056AFE4]). The cheats page is the main menu's one (00146410, kept at page+0x60).
+
 ## The MODS entry (src/fci_mainmenu.c)
 
 A hidden button of `P_Main` is shown as MODS; its press opens the mod menu (src/xbr/fci_overlay.cpp), and
@@ -107,9 +126,14 @@ closing that leaves the main menu as it was. Nothing in the game's files changes
   indented). A gate on the start step 000FAA54 shows it again (+0x18 bit 0, then 00270FEC with al = 1) and
   lets the step hide `B_CheatsDebug` as before; a gate on the press handler opens the mod menu in place of
   area 4, which Evolution leaves empty.
-- Label and help line: gates on the lookups answer for (PreGameMenu.xml, `P_Main` or `HelpText`, the entry's
-  button) with MODS and a line in the table's language, built by the game's own string functions (00044FC0,
-  00037AB8 from host code via recomp_lookup), so the game frees them as its own.
+- Pause menus (both games, single player and multiplayer): FRIENDS LIST (`B_LiveMenu`), which offline only
+  leads to the sign-in page, is MODS. One gate serves the four press handlers (0014B790, aliased for 00149FA0,
+  000F92FF and 000F8405): `B_LiveMenu` opens the mod menu and returns. The game stays paused under it; B,
+  Escape or Close return to the pause menu with MODS selected.
+- Labels and help line: gates on the lookups answer for (PreGameMenu.xml, `P_Main` or `HelpText`, the entry's
+  button) and (InGameMenu.xml, `P_StartMenu`, `B_LiveMenu`) with MODS and, for the main menu, a line in the
+  table's language, built by the game's own string functions (00044FC0, 00037AB8 from host code via
+  recomp_lookup), so the game frees them as its own.
 
 Checks (2026-10-30, test installs, tools/game_driver.py):
 
@@ -120,6 +144,10 @@ Checks (2026-10-30, test installs, tools/game_driver.py):
   F1, Insert and both sticks still open and close it (both games, at the main menu).
 - Evolution: OPTIONS and back keep MODS; French and German (`RECOMP_CVAR_g_language`) show their lines.
 - No mods: the entry is there and the menu says it found none.
+- Pause menus (2026-10-31, the user's options, saves in 02_Native and 23_DUNEC): MODS between OPTIONS and
+  CHEATS MENU in both games; A opens the mod menu over the paused game (`[FCI] mod menu opened (the pause
+  menu's MODS)`) without moving its first slider, B closes it, RESUME resumes. The keyboard: Down to MODS,
+  Enter, Escape closes it, Escape again resumes.
 
 Open:
 

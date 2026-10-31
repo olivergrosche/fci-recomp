@@ -9,8 +9,14 @@
  *     it again. The press handler (000FB0A2) would turn to the empty Special Features area: the gate opens
  *     the mod menu instead.
  *
- * The label and help line come from the string tables' lookup (Instincts 00072570, Evolution 000577C3): for
- * that button it answers with our texts. The game's files stay as they are. */
+ * The pause menus (InGameMenu.xml's P_StartMenu, single player and multiplayer) have FRIENDS LIST, B_LiveMenu,
+ * which offline only leads to Xbox Live's sign-in: it is MODS there, and the press handlers (Instincts 0014B790
+ * and 00149FA0, Evolution 000F92FF and 000F8405) open the mod menu in place of the friends page. The game
+ * stays paused under it, and closing it leaves the pause menu as it was.
+ *
+ * The labels and the main menu's help line come from the string tables' lookup (Instincts 00072570, Evolution
+ * 000577C3): for those buttons it answers with our texts (the pause menus have no help line). The game's
+ * files stay as they are. */
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -21,7 +27,7 @@
 #include "recomp_types.h"
 
 extern uint32_t xbox_HeapAlloc(uint32_t size, uint32_t alignment);
-void fci_overlay_open_from_menu(void); /* xbr/fci_overlay.cpp */
+void fci_overlay_open_from_menu(const char *by); /* xbr/fci_overlay.cpp */
 
 /* the button's label, and its help line in the game's languages (the language's folder name) */
 static const wchar_t LABEL[] = L"MODS";
@@ -51,17 +57,20 @@ static uint32_t crc32_of(const char *s)
     return ~c;
 }
 
-static uint32_t id_file, id_main, id_help, id_debug, id_special;
+static uint32_t id_file, id_main, id_help, id_debug, id_ingame, id_start, id_live, id_special;
 
 static void ids(void)
 {
     if (id_special)
         return;
-    id_file = crc32_of("PreGameMenu.xml"); /* the main menu page's string table (LANGUAGES/<language>/...) */
-    id_main = crc32_of("P_Main");          /* the section of the main menu's labels */
-    id_help = crc32_of("HelpText");        /* the section of the line under the menu */
-    id_debug = crc32_of("B_CheatsDebug");  /* Instincts' entry */
-    id_special = crc32_of("B_SpecialFeatures"); /* Evolution's */
+    id_file = crc32_of("PreGameMenu.xml");  /* the main menu page's string table (LANGUAGES/<language>/...) */
+    id_main = crc32_of("P_Main");           /* the section of the main menu's labels */
+    id_help = crc32_of("HelpText");         /* the section of the line under the menu */
+    id_debug = crc32_of("B_CheatsDebug");   /* Instincts' entry */
+    id_ingame = crc32_of("InGameMenu.xml"); /* the pause menus' string table */
+    id_start = crc32_of("P_StartMenu");     /* their section */
+    id_live = crc32_of("B_LiveMenu");       /* FRIENDS LIST */
+    id_special = crc32_of("B_SpecialFeatures"); /* Evolution's main menu entry; last: ids() is done */
 }
 
 /* the language object's name (a std::string at +0: its text in place under 16 bytes, else at [+4]) */
@@ -111,21 +120,39 @@ static uint32_t guest_text(const wchar_t *text, uint32_t *len)
 }
 
 /* the text the lookup gives for (file, section, entry) instead of the table's, or NULL; button is the
- * title's entry */
+ * title's main menu entry */
 static const wchar_t *ours(uint32_t file, uint32_t section, uint32_t entry, uint32_t language,
                            uint32_t button)
 {
-    static LONG logged;
+    static LONG logged[2];
     const wchar_t *text = NULL;
-    if (file != id_file || entry != button)
-        return NULL;
-    if (section == id_main)
+    int pause = file == id_ingame;
+    if (pause && section == id_start && entry == id_live)
         text = LABEL;
-    else if (section == id_help)
+    else if (file == id_file && entry == button && section == id_main)
+        text = LABEL;
+    else if (file == id_file && entry == button && section == id_help)
         text = HELP[language_of(language)].help;
-    if (text && InterlockedCompareExchange(&logged, 1, 0) == 0)
-        fprintf(stderr, "[FCI] main menu: MODS entry (%s)\n", HELP[language_of(language)].language);
+    if (text && InterlockedCompareExchange(&logged[pause], 1, 0) == 0)
+        fprintf(stderr, "[FCI] %s menu: MODS entry (%s)\n", pause ? "pause" : "main",
+                HELP[language_of(language)].language);
     return text;
+}
+
+/* ---- both games' pause menus ---- */
+
+/* the pause menus' press handlers, single player (Instincts 0014B790, Evolution 000F92FF) and multiplayer
+ * (00149FA0, 000F8405): eax = event (its +4 the element), the page on the stack, ret 4, the result unused.
+ * B_LiveMenu would show the Live friends page, or offline the one that asks to sign in ([006B3438]): the mod
+ * menu instead */
+int fci_gate_0014B790(void)
+{
+    ids();
+    if (!g_eax || MEM32(g_eax + 4) != id_live)
+        return 0;
+    fci_overlay_open_from_menu("the pause menu's MODS");
+    g_esp += 8; /* ret 4 */
+    return 1;
 }
 
 /* ---- Instincts ---- */
@@ -171,7 +198,7 @@ void fci_prehook_0014EFF0(void)
     uint32_t event = MEM32(g_esp + 4);
     ids();
     if (event && MEM32(event + 4) == id_debug)
-        fci_overlay_open_from_menu();
+        fci_overlay_open_from_menu("the main menu's MODS");
 }
 
 /* ---- Evolution ---- */
@@ -236,7 +263,7 @@ int fci_gate_000FB0A2(void)
     ids();
     if (!event || MEM32(event + 4) != id_special)
         return 0;
-    fci_overlay_open_from_menu();
+    fci_overlay_open_from_menu("the main menu's MODS");
     g_eax &= 0xFFFFFF00u;
     g_esp += 8; /* ret 4 */
     return 1;
