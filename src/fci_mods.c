@@ -3,6 +3,7 @@
  *   <exe folder>\mods\<id>\mod.ini                name, group, description, credit (UTF-8, all optional)
  *   <exe folder>\mods\<id>\<archive>\<path>       a file in place of the archive's: weaponpack\animations\...
  *   <exe folder>\mods\<id>\particles-add\*.xml    particle effects added to every level's library (below)
+ *   <exe folder>\mods\<id>\mission-patch\*.xml    attributes set on entities of every level's mission (below)
  *   <exe folder>\mods\enabled.txt                 the switched-on mods, an id a line; a later one wins
  *   <exe folder>\mods\settings.ini                the menu's settings: weapon-strength, enemy-damage (percent)
  *
@@ -30,6 +31,7 @@
 #define MAX_ARCHIVES 128 /* every level's, when a mod adds particle effects */
 #define FIELD        512
 #define ADDS_DIR     L"particles-add" /* a mod's folder of particle effects for every level's library */
+#define PATCH_DIR    L"mission-patch" /* a mod's folder of rules for the entities of every level's mission */
 
 typedef struct {
     int archive;   /* into archives[] */
@@ -43,6 +45,8 @@ typedef struct {
     int nfiles, enabled, active;
     WCHAR **adds; /* particle effects for every level's library: <mod>\particles-add\*.xml */
     int nadds;
+    WCHAR **patches; /* rules for every level's mission: <mod>\mission-patch\*.xml */
+    int npatches;
 } Mod;
 
 typedef struct {
@@ -52,7 +56,8 @@ typedef struct {
     WCHAR cache_dat[MAX_PATH]; /* the merged copies, empty when no enabled mod touches it */
     WCHAR cache_fat[MAX_PATH];
     uint32_t library;   /* the name of its particle library when the enabled mods add effects to it, else 0 */
-    volatile LONG lazy; /* 1: merged when the game first opens it (it only gets particle effects) */
+    uint32_t mission;   /* the name of its mission when the enabled mods patch missions, else 0 */
+    volatile LONG lazy; /* 1: merged when the game first opens it (it only gets effects or mission rules) */
 } Archive;
 
 static Mod mods[MAX_MODS];
@@ -173,6 +178,18 @@ static uint32_t library_of(const WCHAR *rel)
     return name_hash(inner);
 }
 
+/* a level's archive holds its mission as levels\<dir>\mission_mission0.xml (the campaign's levels; the
+ * multiplayer maps have none); 0 for the other archives */
+static uint32_t mission_of(const WCHAR *rel)
+{
+    WCHAR inner[MAX_PATH];
+    const WCHAR *dir = rel + 7, *end;
+    if (_wcsnicmp(rel, L"levels\\", 7) || !(end = wcschr(dir, L'\\')) || end == dir || wcschr(end + 1, L'\\'))
+        return 0;
+    swprintf_s(inner, MAX_PATH, L"levels\\%.*s\\mission_mission0.xml", (int)(end - dir), dir);
+    return name_hash(inner);
+}
+
 /* ---- the mods ---- */
 
 static void ini_value(Mod *m, const char *key, const char *value)
@@ -240,6 +257,13 @@ static void add_files(Mod *m, const WCHAR *root, const WCHAR *rel)
             m->adds[m->nadds++] = _wcsdup(path);
             continue;
         }
+        if (!_wcsnicmp(sub, PATCH_DIR L"\\", wcslen(PATCH_DIR) + 1) && wcslen(sub) > 4
+            && !_wcsicmp(sub + wcslen(sub) - 4, L".xml")) { /* rules for the levels' missions */
+            swprintf_s(path, MAX_PATH, L"%s\\%s", root, sub);
+            m->patches = realloc(m->patches, sizeof(WCHAR *) * (m->npatches + 1));
+            m->patches[m->npatches++] = _wcsdup(path);
+            continue;
+        }
         if ((a = archive_of(sub, &inner)) < 0)
             continue;
         swprintf_s(path, MAX_PATH, L"%s\\%s", root, sub);
@@ -273,7 +297,7 @@ static void scan(void)
         swprintf_s(ini, MAX_PATH, L"%s\\mod.ini", root);
         read_ini(m, ini);
         add_files(m, root, L"");
-        if (m->nfiles || m->nadds)
+        if (m->nfiles || m->nadds || m->npatches)
             nmods++;
         else
             fprintf(stderr, "[FCI] mods: %s replaces no file of the game; left out\n", m->id);
@@ -649,6 +673,191 @@ static int splice(const WCHAR *archive, const uint8_t *lib, DWORD size, uint8_t 
     return 1;
 }
 
+/* ---- rules for the entities of every level's mission ----
+ *
+ * A level's mission (levels\<dir>\mission_mission0.xml in its archive) lists its entities, each an
+ * <Entity ... EntityClass="Merc" ...> element whose children carry its properties: the creature type as
+ * <Properties tplCreatureType="<library>.<group>.<name>">, the voice as <Properties2 SoundPack="Merc3">
+ * (re/notes/SOUNDS.md). A mod's mission-patch\*.xml holds rules, one element each:
+ *
+ *     <Entity Archetype="FC15_EnemyArchetypeLibrary.Pirate1.Scout" SoundPack="halogruntpirates" />
+ *
+ * Every entity of every level's mission whose tplCreatureType is the Archetype (any case) gets the rule's
+ * other attributes: each attribute of that name in the entity's elements that has a value takes the rule's
+ * (an empty one stays empty: the levels leave some enemies silent; an attribute the entity lacks is not
+ * added). All enabled mods' rules apply, so mods that patch the same missions work together and are no
+ * alternatives in the menu; of two rules for the same archetype and attribute the later mod's wins. The
+ * rules go into the mission the archive holds or the one a mod puts in its place. */
+
+typedef struct {
+    char archetype[160], attribute[64], value[160];
+} Rule;
+
+static Rule *rules;
+static int nrules;
+static uint64_t rules_key; /* their files, for the merged copies' digest */
+
+/* the value of attribute name in the tag t[0..end), copied to out; 0 when the tag has none */
+static int attribute_of(const char *t, const char *end, const char *name, char *out, size_t cap)
+{
+    size_t n = strlen(name);
+    for (const char *p = t; (p = find_text(p, end, name)) != NULL; p += n) {
+        const char *q = p + n, *e;
+        if (p == t || !strchr(" \t\r\n", p[-1]) || q + 2 > end || q[0] != '=' || q[1] != '"')
+            continue;
+        q += 2;
+        if (!(e = memchr(q, '"', (size_t)(end - q))) || (size_t)(e - q) >= cap)
+            return 0;
+        memcpy(out, q, (size_t)(e - q));
+        out[e - q] = 0;
+        return 1;
+    }
+    return 0;
+}
+
+/* the enabled mods' rules (load_choice first) */
+static void load_rules(void)
+{
+    rules_key = 0xCBF29CE484222325ull;
+    for (int k = 0; k < norder; k++) {
+        Mod *m = &mods[order[k]];
+        for (int f = 0; f < m->npatches; f++) {
+            uint8_t *buf;
+            DWORD size;
+            const char *t, *end, *p;
+            int got = 0;
+            if (!read_all(m->patches[f], &buf, &size)) {
+                fprintf(stderr, "[FCI] mods: cannot read %S\n", m->patches[f]);
+                continue;
+            }
+            rules_key = file_stamp(rules_key, m->patches[f]);
+            t = (const char *)buf;
+            end = t + size;
+            for (p = t; (p = find_text(p, end, "<Entity")) != NULL; p++) {
+                const char *close = memchr(p, '>', (size_t)(end - p)), *a;
+                char archetype[160];
+                if (!close || !strchr(" \t\r\n", p[7]))
+                    continue;
+                if (!attribute_of(p, close, "Archetype", archetype, sizeof archetype)) {
+                    fprintf(stderr, "[FCI] mods: %S: an <Entity> rule without an Archetype; left out\n",
+                            m->patches[f]);
+                    continue;
+                }
+                for (a = p + 7; a < close;) { /* each other attribute: name="value" */
+                    const char *eq, *q, *e;
+                    Rule r;
+                    int j;
+                    while (a < close && strchr(" \t\r\n/", *a))
+                        a++;
+                    if (a >= close || !(eq = memchr(a, '=', (size_t)(close - a))) || eq + 1 >= close
+                        || eq[1] != '"' || !(e = memchr(q = eq + 2, '"', (size_t)(close - eq - 2))))
+                        break;
+                    if ((size_t)(eq - a) < sizeof r.attribute && (size_t)(e - q) < sizeof r.value
+                        && (eq - a != 9 || memcmp(a, "Archetype", 9))) {
+                        snprintf(r.archetype, sizeof r.archetype, "%s", archetype);
+                        memcpy(r.attribute, a, (size_t)(eq - a));
+                        r.attribute[eq - a] = 0;
+                        memcpy(r.value, q, (size_t)(e - q));
+                        r.value[e - q] = 0;
+                        for (j = 0; j < nrules && (_stricmp(rules[j].archetype, r.archetype)
+                                                   || strcmp(rules[j].attribute, r.attribute));
+                             j++)
+                            ;
+                        if (j < nrules)
+                            fprintf(stderr, "[FCI] mods: %s of %s: %s's rule in place of an earlier mod's\n",
+                                    r.attribute, r.archetype, m->id);
+                        else
+                            rules = realloc(rules, sizeof *rules * ++nrules);
+                        rules[j] = r;
+                        got++;
+                    }
+                    a = e + 1;
+                }
+            }
+            if (!got)
+                fprintf(stderr, "[FCI] mods: %S holds no rule\n", m->patches[f]);
+            free(buf);
+        }
+    }
+}
+
+typedef struct {
+    size_t at, len; /* the value to replace in the mission */
+    const char *value;
+} Change;
+
+static int by_at(const void *a, const void *b)
+{
+    size_t x = ((const Change *)a)->at, y = ((const Change *)b)->at;
+    return x < y ? -1 : x > y;
+}
+
+/* the mission with the rules applied, in *out (malloc); 0 when no rule changes it */
+static int patch_mission(const WCHAR *archive, const uint8_t *mission, DWORD size, uint8_t **out,
+                         uint32_t *out_size)
+{
+    const char *t = (const char *)mission, *end = t + size, *p;
+    Change *c = NULL;
+    int nc = 0, cap = 0, entities = 0;
+    size_t total = size, w = 0, from = 0;
+    uint8_t *o;
+    for (p = t; (p = find_text(p, end, "<Entity")) != NULL; p++) {
+        const char *close = memchr(p, '>', (size_t)(end - p)), *stop;
+        char archetype[160];
+        int hit = 0;
+        if (!close || !strchr(" \t\r\n", p[7]))
+            continue;
+        stop = close[-1] == '/' ? close : find_text(close, end, "</Entity>"); /* its elements */
+        if (!stop)
+            stop = end;
+        if (!attribute_of(p, stop, "tplCreatureType", archetype, sizeof archetype))
+            continue;
+        for (int r = 0; r < nrules; r++) {
+            const char *a;
+            size_t n = strlen(rules[r].attribute);
+            if (_stricmp(rules[r].archetype, archetype))
+                continue;
+            for (a = p; (a = find_text(a, stop, rules[r].attribute)) != NULL; a += n) {
+                const char *q = a + n, *e;
+                if (!strchr(" \t\r\n", a[-1]) || q + 2 > stop || q[0] != '=' || q[1] != '"'
+                    || !(e = memchr(q + 2, '"', (size_t)(stop - q - 2))) || e == q + 2)
+                    continue; /* another name's tail, or an empty value */
+                if (nc == cap)
+                    c = realloc(c, sizeof *c * (cap = cap ? cap * 2 : 256));
+                c[nc].at = (size_t)(q + 2 - t);
+                c[nc].len = (size_t)(e - q - 2);
+                c[nc++].value = rules[r].value;
+                total += strlen(rules[r].value);
+                hit = 1;
+            }
+        }
+        entities += hit;
+        p = stop;
+    }
+    if (!nc) {
+        free(c);
+        return 0;
+    }
+    qsort(c, nc, sizeof *c, by_at);
+    o = malloc(total + 1);
+    for (int i = 0; i < nc; i++) {
+        size_t v = strlen(c[i].value);
+        memcpy(o + w, t + from, c[i].at - from);
+        w += c[i].at - from;
+        memcpy(o + w, c[i].value, v);
+        w += v;
+        from = c[i].at + c[i].len;
+    }
+    memcpy(o + w, t + from, size - from);
+    w += size - from;
+    free(c);
+    fprintf(stderr, "[FCI] mods: mission of %S: %d values of %d entities set by the mods' rules\n", archive, nc,
+            entities);
+    *out = o;
+    *out_size = (uint32_t)w;
+    return 1;
+}
+
 static int read_range(const WCHAR *path, uint32_t offset, uint32_t size, uint8_t **out)
 {
     HANDLE h = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
@@ -691,6 +900,8 @@ static int merge(int a)
     }
     if (ar->library && nadd_blocks)
         key = fnv(key, &adds_key, sizeof adds_key);
+    if (ar->mission && nrules)
+        key = fnv(key, &rules_key, sizeof rules_key);
     wcscpy_s(name, MAX_PATH, ar->rel);
     for (WCHAR *p = name; *p; p++)
         if (*p == L'\\' || *p == L'/')
@@ -758,6 +969,20 @@ static int merge(int a)
             if (splice(ar->rel, lib, size, &e[i].mem, &e[i].mem_size))
                 changed++;
             free(lib);
+        }
+    }
+    if (ar->mission && nrules) { /* the mods' rules into the level's mission */
+        uint32_t i;
+        uint8_t *x;
+        DWORD size;
+        for (i = 0; i < total && e[i].hash != ar->mission; i++)
+            ;
+        if (i < total
+            && (e[i].src ? read_all(e[i].src, &x, &size)
+                         : (size = e[i].size, read_range(ar->host_dat, e[i].offset, e[i].size, &x)))) {
+            if (patch_mission(ar->rel, x, size, &e[i].mem, &e[i].mem_size))
+                changed++;
+            free(x);
         }
     }
     if (!changed) { /* nothing to merge: the game's own stays */
@@ -847,7 +1072,7 @@ static void host_path(xbox_host_char *path, DWORD cap)
             continue;
         if (!(dat = !_wcsicmp(path, ar->host_dat)) && _wcsicmp(path, ar->host_fat))
             continue;
-        if (ar->lazy) { /* a level's archive that only gets particle effects: merged on its first open */
+        if (ar->lazy) { /* a level's archive that only gets effects or rules: merged on its first open */
             AcquireSRWLockExclusive(&lazy_lock);
             if (ar->lazy) {
                 if (!merge(a))
@@ -864,7 +1089,7 @@ static void host_path(xbox_host_char *path, DWORD cap)
     }
 }
 
-/* every level's archive, for the mods' particle effects */
+/* every level's archive, for the mods' particle effects and mission rules */
 static void add_levels(void)
 {
     WCHAR pattern[MAX_PATH];
@@ -920,18 +1145,25 @@ void fci_mods_init(const char *game_dir)
     CreateDirectoryW(cache_w, NULL);
     SetFileAttributesW(cache_w, FILE_ATTRIBUTE_HIDDEN);
     load_additions();
-    if (nadd_blocks) {
+    load_rules();
+    if (nadd_blocks || nrules)
         add_levels();
+    if (nadd_blocks) {
         for (int a = 0; a < narchives; a++)
             archives[a].library = library_of(archives[a].rel);
         fprintf(stderr, "[FCI] mods: %d particle effects for every level's library\n", nadd_blocks);
+    }
+    if (nrules) {
+        for (int a = 0; a < narchives; a++)
+            archives[a].mission = mission_of(archives[a].rel);
+        fprintf(stderr, "[FCI] mods: %d rules for every level's mission\n", nrules);
     }
     for (int a = 0; a < narchives; a++) {
         int used = 0;
         for (int k = 0; k < norder && !used; k++)
             for (int f = 0; f < mods[order[k]].nfiles && !used; f++)
                 used = mods[order[k]].files[f].archive == a;
-        if (!used && archives[a].library)
+        if (!used && (archives[a].library || archives[a].mission))
             archives[a].lazy = 1; /* merged when the game opens it (host_path) */
         else if (used && !merge(a))
             archives[a].cache_dat[0] = 0;
@@ -944,8 +1176,8 @@ void fci_mods_init(const char *game_dir)
         for (int f = 0; f < m->nfiles; f++)
             if (!archives[m->files[f].archive].cache_dat[0])
                 m->active = 0;
-        fprintf(stderr, "[FCI] mods: %s (%d files, %d particle files)%s\n", m->id, m->nfiles, m->nadds,
-                m->active ? "" : " NOT active");
+        fprintf(stderr, "[FCI] mods: %s (%d files, %d particle files, %d mission rule files)%s\n", m->id,
+                m->nfiles, m->nadds, m->npatches, m->active ? "" : " NOT active");
     }
     g_xbox_host_path_hook = host_path;
 }

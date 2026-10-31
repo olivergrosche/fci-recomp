@@ -259,6 +259,40 @@ Counted by speaker, and for 56 scene lines by their subtitle (fci-modsrc `halo/v
 Instincts 488 lines of enemies in 27 banks, 638 kept (people, civilians, unknown speakers, scenes);
 Evolution 137 in 21 banks, 528 kept.
 
+### Voice by model
+
+Found 2026-10-31 from both games' missions, dependency lists and `scripts\ai\packs\sound\packs.lua`.
+
+An enemy's model is not in its mission entity: it comes with its archetype, `<Properties
+tplCreatureType="EnemyArchetypesLibrary.Merc3.Scout"/>` (`FC15_EnemyArchetypeLibrary.*` in Evolution,
+`Level.*` for a level's own), and each archetype has one model in all levels (checked against the
+dependency lists: 40 archetypes in Instincts, 62 in Evolution). In Instincts the group says the model
+(`Merc1`, `Merc2`: merc_prtoto01; `Merc3`: merc_kit_03; `SpecOps`: merc_kit_04), in Evolution only the whole
+name does (`Pirate1.Grunt` is kit 1, `Pirate1.Scout` kit 3). The pack, `<Properties2 SoundPack="...">`,
+sits beside it on the same entity (and on a `CreatureGeneratorSpawnSpot`, for what it spawns); an empty
+one makes a silent enemy.
+
+A pack is found by name in `SOUNDPACK.AVAILABLE` (`scripts\ai\packs\sound\packs.lua`: `Merc1 =
+'Scripts/AI/Packs/Sound/Merc1.lua'`), whose script the entity loads (`Script:LoadScript`; "Invalid
+SoundPack" in the log when the name is missing). Evolution lower-cases the name first (`strlower`), so its
+keys are lower case. A level script's `Sound:AddAvailableSoundPack(n)` for n = 1 to 10 loads `Voices_Merc<n>`
+(the XBE's `Voices_Merc%d`): every Instincts level holds all seven mercenary banks.
+
+So a voice can follow the model: a mod loader rule (README "Mods", `mission-patch`) gives the archetypes of
+a model a pack of their own, and the pack plays a bank of their creature. The Halo voice mods (fci-modsrc
+`halo/voices/kits.py`) give each family three packs, `halo<creature><family>`, on three of its banks
+(Elite, Grunt, Jackal: Instincts `voices_merc1` to `_merc3`, which the heavy mercenaries share;
+`fc15_barks_pirate_1` to `_3`, `_rebel_1` to `_3`, which level 22 loads, `_feral_1` to `_3`), point the
+family's own packs at the bank of its default creature (Instincts' Worker1 to Worker3 at an English one),
+and put the rules, the creature's bank and pack and the registry into each Halo character mod: the default
+mods change 1,059 entities' packs in Instincts and 1,112 in Evolution; only the creatures switched on hold
+memory. A savepoint keeps its entities' properties: a level resumed from a save made before keeps the packs
+it had (the family's own, so the default creature's voice; checked in game: an Instincts save resumed with
+the family's packs pointed at English banks played no Halo bark where the old voice mods played 19), and only a level loaded anew (Restart
+Level, Load a Map, the next level) takes the rules. In game, Evolution's pirates barked from the patched
+packs on a new game; in Instincts every level's mission came out patched as modelled and the levels played,
+but the test driver reached no enemies from the unlocked maps' starts, so its patched packs were not heard.
+
 ### Replacing them
 
 The `.LS2` files lie outside the archives, so a mod puts new voices into the bank (`replace`, as with the
